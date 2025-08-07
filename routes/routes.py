@@ -148,7 +148,15 @@ def register_routes(app):
 
         now = datetime.utcnow()
         week_ago = now - timedelta(days=7)
-        chats = ChatHistory.query.filter(ChatHistory.created_at >= week_ago).all()
+
+        # Region filter from query params ("" means all regions)
+        selected_region = request.args.get('region', '').strip()
+
+        if selected_region:
+            chats = ChatHistory.query.join(User, ChatHistory.user_id == User.id) \
+                .filter(ChatHistory.created_at >= week_ago, User.region == selected_region).all()
+        else:
+            chats = ChatHistory.query.filter(ChatHistory.created_at >= week_ago).all()
 
         jumlah_pertanyaan = len(chats)
 
@@ -191,16 +199,14 @@ def register_routes(app):
         jam_aktif_tertinggi = f"{jam_counter.most_common(1)[0][0]}:00" if jam_counter else '-'
         user_counter = _collections.Counter([c.user_id for c in chats if c.user_id])
         rata2_pertanyaan_per_user = f"{(jumlah_pertanyaan/len(user_counter)):.2f}" if user_counter else '-'
-        user_paling_aktif = user_map[user_counter.most_common(1)[0][0]].name if user_counter else '-'
 
-        # Lokasi untuk peta
-        user_ids = set(c.user_id for c in chats if c.user_id)
-        locations = User.query.filter(User.id.in_(user_ids), User.latitude != None, User.longitude != None).with_entities(User.latitude, User.longitude, User.region, User.name).all()
-        locations_json = [
-            {"lat": float(lat), "lon": float(lon), "region": region, "name": name}
-            for lat, lon, region, name in locations
-        ]
-        wilayah_aktif = ', '.join(sorted(set(l["region"] for l in locations_json if l["region"])) ) if locations_json else '-'
+        # Wilayah aktif (tanpa koordinat atau username)
+        regions_in_chats = sorted(set(
+            (user_map[c.user_id].region if (c.user_id in user_map and user_map[c.user_id].region) else None)
+            for c in chats
+        ))
+        regions_in_chats = [r for r in regions_in_chats if r]
+        wilayah_aktif = ', '.join(regions_in_chats) if regions_in_chats else '-'
 
         # Early Warning System (setelah data tersedia)
         ews = []
@@ -229,14 +235,13 @@ def register_routes(app):
             jumlah_pertanyaan=jumlah_pertanyaan,
             top_topics=top_topics,
             wilayah_aktif=wilayah_aktif,
-            locations_json=locations_json,
             all_regions=all_regions,
             all_topics=all_topics,
             all_chats=all_chats,
             jam_aktif_tertinggi=jam_aktif_tertinggi,
             rata2_pertanyaan_per_user=rata2_pertanyaan_per_user,
-            user_paling_aktif=user_paling_aktif,
-            ews=ews
+            ews=ews,
+            selected_region=selected_region
         )
 
 
@@ -406,7 +411,7 @@ def register_routes(app):
     def api_admin_trends():
         if 'user_id' not in session or session.get('user_role') != 'admin':
             return jsonify({'error': 'Unauthorized'}), 401
-        from .models import ChatHistory
+        from .models import ChatHistory, User
         from datetime import timedelta
         import collections, re
 
@@ -422,9 +427,15 @@ def register_routes(app):
         except Exception:
             top_k = 5
 
+        region_filter = request.args.get('region', '').strip()
+
         now = datetime.utcnow()
         start_time = now - timedelta(days=days)
-        chats = ChatHistory.query.filter(ChatHistory.created_at >= start_time).all()
+        if region_filter:
+            chats = ChatHistory.query.join(User, ChatHistory.user_id == User.id) \
+                .filter(ChatHistory.created_at >= start_time, User.region == region_filter).all()
+        else:
+            chats = ChatHistory.query.filter(ChatHistory.created_at >= start_time).all()
 
         # Compute phrase counts across chats and choose a best phrase per chat
         phrase_counts = _collections.Counter()
@@ -512,13 +523,18 @@ def register_routes(app):
             days = int(request.args.get('days', '30'))
         except Exception:
             days = 30
+        region_filter = request.args.get('region', '').strip()
 
         if not topic:
             return jsonify({'markers': []})
 
         now = datetime.utcnow()
         start_time = now - timedelta(days=days)
-        chats = ChatHistory.query.filter(ChatHistory.created_at >= start_time).all()
+        if region_filter:
+            chats = ChatHistory.query.join(User, ChatHistory.user_id == User.id) \
+                .filter(ChatHistory.created_at >= start_time, User.region == region_filter).all()
+        else:
+            chats = ChatHistory.query.filter(ChatHistory.created_at >= start_time).all()
 
         counts_by_user = collections.Counter()
         for c in chats:
@@ -531,11 +547,14 @@ def register_routes(app):
         if not counts_by_user:
             return jsonify({'markers': []})
 
-        users = User.query.filter(
+        users_query = User.query.filter(
             User.id.in_(list(counts_by_user.keys())),
             User.latitude != None,
             User.longitude != None
-        ).with_entities(User.id, User.latitude, User.longitude, User.region).all()
+        )
+        if region_filter:
+            users_query = users_query.filter(User.region == region_filter)
+        users = users_query.with_entities(User.id, User.latitude, User.longitude, User.region).all()
 
         markers_map = {}
         for uid, lat, lon, region in users:
