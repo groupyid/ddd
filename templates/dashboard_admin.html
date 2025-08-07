@@ -326,11 +326,14 @@
             bounds.push([m.lat, m.lon]);
         });
         if (bounds.length > 0) map.fitBounds(bounds, { padding: [20, 20] });
+        else map.setView(defaultCenter, 4);
     }
 
     const topicEl = document.getElementById('filter-topic');
     const mapDaysEl = document.getElementById('map-days');
     topicEl.addEventListener('change', () => renderTopicBubbles(topicEl.value, mapDaysEl.value));
+    // When topic is empty ("Semua topik"), show aggregated bubbles
+    if (!topicEl.value) { renderTopicBubbles('', mapDaysEl.value); }
     mapDaysEl.addEventListener('change', () => renderTopicBubbles(topicEl.value, mapDaysEl.value));
 
     // Initialize on load

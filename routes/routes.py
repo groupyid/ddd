@@ -799,9 +799,6 @@ def register_routes(app):
         region_filter = request.args.get('region', '').strip()
         province_id = request.args.get('province_id', '').strip()
 
-        if not topic:
-            return jsonify({'markers': []})
-
         # Ensure regencies exist for requested province
         if province_id:
             try:
@@ -851,14 +848,19 @@ def register_routes(app):
 
         counts_by_user = collections.Counter()
         normalized_topic = topic.strip().lower()
-        for c in chats:
-            if not c.user_id:
-                continue
-            phrases = [p.lower() for p in extract_phrases(c.question)]
-            # Also check best phrase fallback to handle single-word topics
-            best = extract_best_phrase(c.question).lower() if c.question else '-'
-            if normalized_topic in phrases or normalized_topic == best:
-                counts_by_user[c.user_id] += 1
+        if not normalized_topic:
+            # Aggregate all chats (all topics) per user in the time window
+            for c in chats:
+                if c.user_id:
+                    counts_by_user[c.user_id] += 1
+        else:
+            for c in chats:
+                if not c.user_id:
+                    continue
+                phrases = [p.lower() for p in extract_phrases(c.question)]
+                best = extract_best_phrase(c.question).lower() if c.question else '-'
+                if normalized_topic in phrases or normalized_topic == best:
+                    counts_by_user[c.user_id] += 1
 
         if not counts_by_user:
             return jsonify({'markers': []})
@@ -906,12 +908,52 @@ def register_routes(app):
             user = User.query.get(session.get('user_id'))
             if not user:
                 return jsonify({'error': 'User not found'}), 404
+
+            # Try to infer region (kab/kota) via reverse geocoding if missing
+            inferred_region = None
+            if not region or not str(region).strip():
+                try:
+                    import requests
+                    from .models import Regency
+                    headers = {'User-Agent': 'agri-dashboard/1.0 (contact: admin@example.com)'}
+                    url = f'https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat={lat}&lon={lon}&zoom=10&addressdetails=1&accept-language=id'
+                    r = requests.get(url, headers=headers, timeout=12)
+                    if r.status_code == 200:
+                        addr = (r.json() or {}).get('address') or {}
+                        candidates = [
+                            addr.get('city'), addr.get('county'), addr.get('municipality'),
+                            addr.get('town'), addr.get('village')
+                        ]
+                        candidates = [c for c in candidates if isinstance(c, str) and c.strip()]
+                        if candidates:
+                            raw = candidates[0].upper()
+                            def normalize(n: str) -> str:
+                                n = n.upper()
+                                for p in ['KABUPATEN ', 'KOTA ADMINISTRASI ', 'KOTA ', 'KAB. ']:
+                                    if n.startswith(p):
+                                        n = n[len(p):]
+                                return n.strip()
+                            target = normalize(raw)
+                            # Try exact or containment match against known regencies
+                            regencies = Regency.query.all()
+                            match = None
+                            for reg in regencies:
+                                rn = normalize(reg.name)
+                                if rn == target or rn in target or target in rn:
+                                    match = reg.name
+                                    break
+                            inferred_region = match or candidates[0]
+                except Exception:
+                    inferred_region = None
+
             user.latitude = lat
             user.longitude = lon
-            if isinstance(region, str) and region.strip():
-                user.region = region.strip()
+            # Prefer explicit region; otherwise inferred
+            final_region = (region or '').strip() or (inferred_region or '').strip()
+            if final_region:
+                user.region = final_region
             db.session.commit()
-            return jsonify({'ok': True})
+            return jsonify({'ok': True, 'region': user.region})
         except Exception as e:
             logging.exception('[ERROR] updating user location')
             return jsonify({'error': 'Failed to update location'}), 500
