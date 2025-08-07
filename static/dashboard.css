@@ -1,0 +1,121 @@
+body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    background: #f4f6fb;
+    margin: 0;
+    padding: 0;
+}
+.logout-container {
+    display: flex;
+    justify-content: flex-end;
+    padding: 24px 32px 0 0;
+}
+.logout-btn {
+    background: #e53935;
+    color: #fff;
+    padding: 10px 22px;
+    border-radius: 8px;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 1em;
+    transition: background 0.2s;
+}
+.logout-btn:hover {
+    background: #b71c1c;
+}
+#main-chat-container {
+    max-width: 1200px;
+    margin: 40px auto 0 auto;
+    background: #fff;
+    border-radius: 18px;
+    box-shadow: 0 4px 32px rgba(0,0,0,0.10);
+    min-height: 700px;
+    overflow: hidden;
+}
+#chat-area {
+    padding: 0;
+    background: #f9fbe7;
+    border-radius: 18px;
+}
+#chat-header {
+    padding: 32px 36px 18px 36px;
+    border-bottom: 1.5px solid #e0e0e0;
+    background: linear-gradient(90deg, #43a047 0%, #8bc34a 100%);
+    color: #fff;
+    border-top-left-radius: 18px;
+    border-top-right-radius: 18px;
+}
+#chat-header h1 {
+    font-size: 2em;
+    margin: 0 0 8px 0;
+    letter-spacing: 1px;
+}
+#chat-header p {
+    margin: 0;
+    font-size: 1.1em;
+    color: #e8f5e9;
+}
+#tren-topik, #statistik-pengguna, #db-masalah-chatbot {
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(60,60,60,0.06);
+    padding: 18px 24px;
+    margin-bottom: 24px;
+}
+#tren-topik ol {
+    margin: 0 0 0 18px;
+    padding: 0;
+}
+#tren-topik li {
+    font-size: 1.08em;
+    margin-bottom: 6px;
+}
+#statistik-pengguna ul {
+    margin: 0;
+    padding: 0 0 0 18px;
+}
+#statistik-pengguna li {
+    font-size: 1.08em;
+    margin-bottom: 6px;
+}
+#peta-sebaran {
+    background: #e3f2fd;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(60,60,60,0.06);
+    padding: 18px 24px;
+    margin-bottom: 24px;
+    text-align: center;
+}
+#peta-sebaran img {
+    border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(60,60,60,0.10);
+}
+#peta-sebaran ul {
+    margin: 10px 0 0 0;
+    padding: 0 0 0 18px;
+    text-align: left;
+}
+#peta-sebaran li {
+    font-size: 1.02em;
+    margin-bottom: 4px;
+}
+#db-masalah-chatbot ul {
+    margin: 0 0 0 18px;
+    padding: 0;
+}
+#db-masalah-chatbot li {
+    font-size: 1.05em;
+    margin-bottom: 4px;
+}
+@media (max-width: 900px) {
+    #main-chat-container {
+        max-width: 98vw;
+        margin: 16px auto 0 auto;
+    }
+    #chat-header {
+        padding: 18px 10px 12px 10px;
+    }
+    #chat-area > div[style*='display:flex'] {
+        flex-direction: column;
+        gap: 18px !important;
+    }
+}

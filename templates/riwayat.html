@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Riwayat Chat</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <h2>Riwayat Chat Anda</h2>
+    {% if histories %}
+        <ul>
+        {% for chat in histories %}
+            <li style="margin-bottom: 20px;">
+                <b>Pertanyaan:</b> {{ chat.question }}<br>
+                <b>Jawaban:</b> {{ chat.answer }}<br>
+                <small>{{ chat.created_at.strftime('%d-%m-%Y %H:%M') }}</small>
+            </li>
+        {% endfor %}
+        </ul>
+    {% else %}
+        <p>Belum ada riwayat chat.</p>
+    {% endif %}
+    <a href="{{ url_for('index') }}">Kembali ke Beranda</a>
+</body>
+</html>

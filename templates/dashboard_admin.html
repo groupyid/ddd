@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Admin</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+</head>
+<body>
+    <div class="logout-container">
+        <a href="{{ url_for('logout') }}" class="logout-btn">Logout</a>
+    </div>
+    <div id="main-chat-container">
+        <div id="chat-area" style="width:100%;">
+            <div id="chat-header">
+                <h1>Dashboard Admin</h1>
+                <p>Analisis Interaksi Petani & Early Warning System</p>
+            </div>
+            <div style="padding:32px;">
+                {% if ews and ews|length > 0 %}
+                <div style="background:#fff3cd;border:1.5px solid #ffeeba;padding:18px 22px;border-radius:8px;margin-bottom:28px;">
+                    <h2 style="color:#b8860b;margin-top:0;">⚠️ Early Warning System</h2>
+                    <ul style="margin:0 0 0 18px;">
+                        {% for w in ews %}
+                        <li style="margin-bottom:7px;">
+                            <b>Topik:</b> <span style="color:#d35400">{{ w.topik }}</span> &mdash; <b>Wilayah:</b> <span style="color:#007bff">{{ w.region }}</span><br>
+                            <span style="font-size:0.98em;">Dibahas oleh <b>{{ w.user_count }}</b> user, <b>{{ w.chat_count }}</b> chat minggu ini.</span>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                    <div style="font-size:0.97em;color:#b8860b;margin-top:8px;">Segera lakukan advokasi atau tindak lanjut jika diperlukan.</div>
+                </div>
+                {% endif %}
+                <div style="display:flex;flex-wrap:wrap;gap:32px;align-items:flex-start;">
+                    <div style="flex:1;min-width:320px;max-width:420px;">
+                        <h2>Tren Topik Permasalahan</h2>
+                        <div id="tren-topik">
+                            {% if top_topics %}
+                            <ol style="padding-left:20px;">
+                                {% for topic, count in top_topics %}
+                                <li><b>{{ topic }}</b>: {{ count }} pertanyaan</li>
+                                {% endfor %}
+                            </ol>
+                            {% else %}
+                            <p>Belum ada data tren topik minggu ini.</p>
+                            {% endif %}
+                        </div>
+                        <h2>Insight Statistik</h2>
+                        <div id="statistik-pengguna">
+                            <ul>
+                                <li>Jumlah pertanyaan minggu ini: <b>{{ jumlah_pertanyaan }}</b></li>
+                                <li>Wilayah aktif: <b>{{ wilayah_aktif }}</b></li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div style="flex:1;min-width:320px;max-width:520px;">
+                        <h2>Peta Sebaran Lokasi User</h2>
+                        <div id="peta-sebaran" style="background:#f7fafc;border-radius:12px;padding:16px;">
+                            {% if locations_json and locations_json|length > 0 %}
+                                <div id="map" style="height: 320px; width: 100%; border-radius: 10px;"></div>
+                                <div style="font-size:0.95em;color:#888;margin-top:8px;">Titik: lokasi user yang aktif minggu ini</div>
+                                <ul style="font-size:0.98em;margin-top:10px;">
+                                    {% for loc in locations_json %}
+                                    <li>{{ loc.name }}{% if loc.region %} ({{ loc.region }}){% endif %}: <span style="color:#388e3c">{{ loc.lat }}, {{ loc.lon }}</span></li>
+                                    {% endfor %}
+                                </ul>
+                            {% else %}
+                                <p>Belum ada data lokasi user minggu ini.</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                <div style="margin-top:32px;">
+                    <div style="margin-top:24px;">
+                        <h3>Insight Perilaku Pengguna</h3>
+                        <ul>
+                            <li>Jam aktif tertinggi: <b>{{ jam_aktif_tertinggi or '-' }}</b></li>
+                            <li>Rata-rata pertanyaan per user: <b>{{ rata2_pertanyaan_per_user or '-' }}</b></li>
+                            <li>User paling aktif: <b>{{ user_paling_aktif or '-' }}</b></li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+    var markers = {{ locations_json|tojson|safe }};
+    if (markers.length > 0) {
+        var map = L.map('map').setView([markers[0].lat, markers[0].lon], 5);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 18,
+            attribution: '© OpenStreetMap'
+        }).addTo(map);
+        markers.forEach(function(m) {
+            var popup = '<b>' + m.name + '</b>' + (m.region ? ' (' + m.region + ')' : '') + '<br>Lat: ' + m.lat + ', Lon: ' + m.lon;
+            L.marker([m.lat, m.lon]).addTo(map).bindPopup(popup);
+        });
+    }
+    </script>
+</body>
+</html>

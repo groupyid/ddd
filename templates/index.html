@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chatbot Penyuluh Pertanian</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
+    <style>
+        .session-list {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+        .session-item {
+          padding: 13px 14px;
+          border-radius: 8px;
+          background: #f7f7f7;
+          box-shadow: 0 1px 4px 0 #eaeaea;
+          transition: background 0.2s, box-shadow 0.2s, border 0.2s;
+          cursor: pointer;
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          border: 1.5px solid #f0f0f0;
+          font-size: 1em;
+        }
+        .session-item.active {
+          background: #e3f0ff;
+          border: 1.5px solid #4f8cff;
+        }
+        .session-item:hover {
+          background: #eaf4ff;
+          box-shadow: 0 2px 8px 0 #dbeafe;
+        }
+        .session-item .session-title {
+          font-weight: 600;
+          color: #222;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          max-width: 180px;
+        }
+        .session-item .session-time {
+          font-size: 0.93em;
+          color: #888;
+          margin-top: 2px;
+        }
+        .markdown-answer {
+          background: #f8fafc;
+          border-radius: 7px;
+          padding: 12px 16px;
+          margin: 7px 0 0 0;
+          font-size: 1.04em;
+          color: #222;
+          line-height: 1.7;
+          word-break: break-word;
+        }
+        .markdown-answer h1, .markdown-answer h2, .markdown-answer h3 {
+          margin-top: 1em;
+          margin-bottom: 0.5em;
+        }
+        .markdown-answer ul, .markdown-answer ol {
+          margin-left: 1.2em;
+          margin-bottom: 0.7em;
+        }
+        .markdown-answer code {
+          background: #eaeaea;
+          border-radius: 3px;
+          padding: 2px 5px;
+          font-size: 0.98em;
+        }
+        .session-title.active-title {
+            color: #2563eb;
+        }
+    </style>
+</head>
+<body>
+    <div class="logout-container">
+        <a href="{{ url_for('logout') }}" class="logout-btn">Logout</a>
+    </div>
+    <div id="main-chat-container">
+        <div id="sidebar-history">
+            <h3 style="margin-bottom:18px;">Riwayat Chat</h3>
+            <button id="btn-new-session" style="margin-bottom:18px;width:100%;background:#4f8cff;color:#fff;border:none;padding:10px 0;border-radius:6px;font-weight:bold;cursor:pointer;font-size:1.08em;">+ New Chat</button>
+            {% if sessions %}
+            <div class="session-list">
+            {% for s in sessions %}
+                <div class="session-item{% if s.session_id == active_session %} active{% endif %}" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;" onclick="window.location='?session={{ s.session_id }}'">
+                    <span class="session-title{% if s.session_id == active_session %} active-title{% endif %}" style="flex:1;display:block;">{{ s.title }}</span>
+                    <button class="delete-session-btn" data-session-id="{{ s.session_id }}" role="button" tabindex="0" style="margin-left:8px;background:#ff4d4f;color:#fff;border:none;border-radius:4px;padding:2px 8px;cursor:pointer;pointer-events:auto;">Hapus</button>
+                </div>
+            {% endfor %}
+            </div>
+            {% else %}
+            <div class="no-history">Belum ada riwayat chat.</div>
+            {% endif %}
+            <script>
+            document.getElementById('btn-new-session').onclick = async function() {
+                const res = await fetch('/start_session', {method:'POST'});
+                const data = await res.json();
+                if(data.session_id) {
+                    location.href = '?session=' + data.session_id;
+                } else {
+                    location.href = '?';
+                }
+            };
+
+            // Hapus riwayat chat per session
+            document.querySelectorAll('.delete-session-btn').forEach(btn => {
+                const sessionId = btn.getAttribute('data-session-id');
+                if (!sessionId) {
+                    btn.disabled = true;
+                    btn.title = 'Session ID tidak valid';
+                    return;
+                }
+                btn.onclick = async function(e) {
+                    e.stopPropagation();
+                    if (confirm('Hapus riwayat chat ini?')) {
+                        const res = await fetch(`/delete_session`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ session_id: sessionId })
+                        });
+                        if (res.ok) {
+                            btn.closest('.session-item').remove();
+                            const currentSession = new URLSearchParams(window.location.search).get('session');
+                            if (currentSession === sessionId) {
+                                // Jika session aktif dihapus, kosongkan chat area tanpa reload
+                                document.getElementById('chat-messages').innerHTML = '<div class="message bot-message"><p>Halo! Silakan tulis pertanyaan Anda tentang pertanian, padi, jagung, hama, atau masalah lain.</p></div>';
+                                // Hapus highlight di sidebar
+                                document.querySelectorAll('.session-item').forEach(item => item.classList.remove('active'));
+                                // Hapus param session di URL tanpa reload
+                                if (history.pushState) {
+                                    const url = window.location.origin + window.location.pathname;
+                                    window.history.replaceState({}, document.title, url);
+                                }
+                            }
+                        } else {
+                            const data = await res.json().catch(() => ({}));
+                            alert(data.error || 'Gagal menghapus riwayat chat.');
+                        }
+                    }
+                };
+            });
+            </script>
+            <!-- history-list removed: only session list is shown in sidebar -->
+        </div>
+        <div id="chat-area">
+            <div id="chat-header">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <div>
+                        <h1 style="margin-bottom:0;">Penyuluh Pertanian Digital</h1>
+                        <p style="margin-top:4px;">Chatbot siap membantu pertanyaan Anda tentang pertanian</p>
+                    </div>
+                </div>
+            </div>
+            <div id="chat-messages">
+                {% if active_chats and active_chats|length > 0 %}
+                    {% for chat in active_chats %}
+                        <div class="message user-message">{{ chat.question }}</div>
+                        <div class="message bot-message">
+                            <div class="markdown-answer" id="answer-{{ loop.index }}">{{ chat.answer }}</div>
+                            <script>
+                            (function() {
+                                var el = document.getElementById('answer-{{ loop.index }}');
+                                if (el) {
+                                    el.innerHTML = DOMPurify.sanitize(marked.parse(el.textContent));
+                                }
+                            })();
+                            </script>
+                            {% if chat.sources %}
+                                {% set srcs = chat.sources %}
+                                {% if srcs is string %}
+                                    {% set srcs = srcs | safe | from_json %}
+                                {% endif %}
+                                {% if srcs is iterable and srcs is not string and srcs|length > 0 and srcs[0] and srcs[0]['display_name'] %}
+                                <div class="chat-sources" style="font-size:1em;color:#111;margin-top:18px;margin-bottom:2px;line-height:1.6;">
+                                    <b style="color:#111;">Sumber:</b>
+                                    <ul style="margin:8px 0 0 0;padding-left:18px;list-style-type:disc;">
+                                    {% for s in srcs %}
+                                        <li style="color:#111;margin-bottom:2px;padding-left:0;">
+                                            {% if s.url %}
+                                                <a href="{{ s.url }}" download style="color:#2563eb;text-decoration:underline;">{{ s.display_name }}</a>
+                                            {% else %}
+                                                {{ s.display_name }}
+                                            {% endif %}
+                                        </li>
+                                    {% endfor %}
+                                    </ul>
+                                </div>
+                                {% endif %}
+                            {% endif %}
+                        </div>
+                    {% endfor %}
+                    <script>
+                    window.onload = function() {
+                        var chatMessages = document.getElementById('chat-messages');
+                        if (chatMessages) {
+                            chatMessages.scrollTo({ top: chatMessages.scrollHeight, behavior: 'smooth' });
+                        }
+                    };
+                    </script>
+                {% else %}
+                    <div class="message bot-message">
+                        <p>Halo! Silakan tulis pertanyaan Anda tentang pertanian, padi, jagung, hama, atau masalah lain.</p>
+                    </div>
+                {% endif %}
+            </div>
+            <div id="chat-input-container">
+                <form id="chat-form">
+                    <input type="text" id="user-input" placeholder="Ketik pertanyaan Anda di sini..." autocomplete="off">
+                    <button type="submit">Kirim</button>
+                </form>
+            </div>
+        </div>
+    </div>
+    <script>
+
+        let chatForm = document.getElementById('chat-form');
+        let userInput = document.getElementById('user-input');
+        let chatMessages = document.getElementById('chat-messages');
+        let conversationHistory = [];
+        // historyList removed: no per-question summary in sidebar
+        // Ambil session_id dari URL
+        function getSessionId() {
+            const params = new URLSearchParams(window.location.search);
+            return params.get('session');
+        }
+
+        // Submit chat
+        chatForm.addEventListener('submit', async function(event) {
+            event.preventDefault();
+            const userMessage = userInput.value.trim();
+            if (!userMessage) return;
+            addMessage(userMessage, 'user');
+            userInput.value = '';
+            const loadingIndicator = addMessage('...', 'bot', true);
+            try {
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: userMessage, history: conversationHistory, session_id: getSessionId() })
+                });
+                loadingIndicator.remove();
+                if (!response.ok) {
+                    addMessage('Maaf, terjadi error saat menghubungi server.', 'bot');
+                    return;
+                }
+                const data = await response.json();
+                const botReply = data.reply;
+                const sources = data.sources;
+                addMessage(botReply, 'bot', false, sources);
+                conversationHistory.push({ user: userMessage, bot: botReply });
+            } catch (error) {
+                loadingIndicator.remove();
+                // Hanya tampilkan error jika benar-benar gagal koneksi
+                if (!document.querySelector('.bot-message .markdown-answer')) {
+                    addMessage('Tidak dapat terhubung ke server.', 'bot');
+                }
+            }
+        });
+
+        // Reset chat when new session
+        document.getElementById('btn-new-session').onclick = async function() {
+            const res = await fetch('/start_session', {method:'POST'});
+            const data = await res.json();
+            if(data.session_id) {
+                // Reset conversationHistory for new session
+                conversationHistory = [];
+                location.href = '?session=' + data.session_id;
+            } else {
+                location.href = '?';
+            }
+        };
+
+        // addHistoryItem removed: no per-question summary in sidebar
+
+        function addMessage(text, sender, isLoading = false, sources = []) {
+            const messageElement = document.createElement('div');
+            messageElement.classList.add('message', `${sender}-message`);
+            if (isLoading) {
+                messageElement.innerHTML = `<p>...</p>`;
+                messageElement.classList.add('loading');
+            } else if (sender === 'bot') {
+                let html = `<div class="markdown-answer">${DOMPurify.sanitize(marked.parse(text))}</div>`;
+                if (sources && sources.length > 0) {
+                    html += '<div class="chat-sources" style="font-size:1em;color:#111;margin-top:18px;margin-bottom:2px;line-height:1.6;"><b style="color:#111;">Sumber:</b><ul style="margin:8px 0 0 0;padding-left:18px;list-style-type:disc;">';
+                    sources.forEach(src => {
+                        if (src.url) {
+                            html += `<li style="color:#111;margin-bottom:2px;padding-left:0;"><a href="${src.url}" download style="color:#2563eb;text-decoration:underline;">${src.display_name}</a></li>`;
+                        } else {
+                            html += `<li style="color:#111;margin-bottom:2px;padding-left:0;">${src.display_name}</li>`;
+                        }
+                    });
+                    html += '</ul></div>';
+                }
+                messageElement.innerHTML = html;
+            } else {
+                messageElement.innerHTML = `<p>${text}</p>`;
+            }
+            chatMessages.appendChild(messageElement);
+            // Scroll ke bawah dengan animasi smooth
+            setTimeout(() => {
+                chatMessages.scrollTo({ top: chatMessages.scrollHeight, behavior: 'smooth' });
+            }, 50);
+            return messageElement;
+        }
+
+        // ...existing code...
+    </script>
+</body>
+</html>

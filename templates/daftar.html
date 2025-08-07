@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <title>Daftar Petani</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='daftar.css') }}">
+</head>
+<body>
+    <h2>Form Pendaftaran Petani</h2>
+    {% if error %}
+        <p style="color: red;">{{ error }}</p>
+    {% endif %}
+    <form method="POST">
+        <label>Nama Lengkap:</label><br>
+        <input type="text" name="name" required><br><br>
+
+        <label>Tanggal Lahir:</label><br>
+        <input type="date" name="dob" required><br><br>
+
+        <label>Jenis Kelamin:</label><br>
+        <select name="gender" required>
+            <option value="">-- Pilih Gender --</option>
+            <option value="Laki-laki">Laki-laki</option>
+            <option value="Perempuan">Perempuan</option>
+        </select><br><br>
+
+        <label>Email:</label><br>
+        <input type="email" name="email" required><br><br>
+
+        <label>No. Telepon:</label><br>
+        <input type="text" name="phone" required><br><br>
+
+        <label>Password:</label><br>
+        <input type="password" name="password" required><br><br>
+
+        <button type="submit">Daftar</button>
+    </form>
+    <p>Sudah punya akun? <a href="{{ url_for('login') }}">Login di sini</a></p>
+</body>
+</html>
