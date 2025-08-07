@@ -8,6 +8,67 @@ from datetime import datetime
 from uuid import uuid4
 import json
 
+# ============ Topic Extraction Utilities (phrase-based) ============
+import re as _re
+import collections as _collections
+
+def _normalize_text(text):
+    if not text:
+        return ""
+    return _re.sub(r"\s+", " ", text.lower()).strip()
+
+# Expanded stopwords including 'cara', interrogatives, and common fillers
+STOPWORDS = set([
+    'dan','atau','yang','di','ke','dari','untuk','pada','dengan','apa','bagaimana','adalah','saya','ini','itu',
+    'the','of','in','to','a','is','are','it','as','by','an','be','on','for','was','were','has','have','had','will','can',
+    'petani','chatbot','tolong','mohon','apakah','seperti','agar','yang','jika','bila','dapat','bisa','cara'
+])
+
+# Some phrase starters to avoid as topics
+_AVOID_START = {'cara', 'bagaimana', 'apa', 'tolong', 'mohon'}
+
+_TOKEN_RE = _re.compile(r"\b\w+\b", flags=_re.UNICODE)
+
+def tokenize_words(text):
+    return _TOKEN_RE.findall(_normalize_text(text))
+
+def extract_phrases(text, ngram_sizes=(2,3)):
+    """Extract candidate phrases (bigrams/trigrams) from text, avoiding stopword-only phrases
+    and removing phrases starting/ending with stopwords.
+    """
+    tokens = tokenize_words(text)
+    phrases = []
+    for n in ngram_sizes:
+        if len(tokens) < n:
+            continue
+        for i in range(len(tokens) - n + 1):
+            window = tokens[i:i+n]
+            if window[0] in STOPWORDS or window[-1] in STOPWORDS or window[0] in _AVOID_START:
+                continue
+            # require at least one non-stopword token of length > 2
+            if not any((t not in STOPWORDS and len(t) > 2) for t in window):
+                continue
+            phrase = ' '.join(window)
+            phrases.append(phrase)
+    return phrases
+
+def extract_best_phrase(text, global_phrase_counts=None):
+    """Pick the best phrase from text based on global counts; fallback to the first meaningful word.
+    """
+    candidates = extract_phrases(text)
+    if candidates:
+        if global_phrase_counts:
+            # choose highest frequency phrase present in text
+            candidates_sorted = sorted(candidates, key=lambda p: global_phrase_counts.get(p, 0), reverse=True)
+            if candidates_sorted:
+                return candidates_sorted[0]
+        return candidates[0]
+    # fallback to first meaningful word
+    for w in tokenize_words(text):
+        if w not in STOPWORDS and len(w) > 2 and w not in _AVOID_START:
+            return w
+    return '-'
+
 
 
 def from_json_filter(value):
@@ -80,36 +141,62 @@ def register_routes(app):
     def dashboard_admin():
         if 'user_id' not in session or session.get('user_role') != 'admin':
             return redirect(url_for('login'))
-        from .models import ChatHistory, User
+        from .models import ChatHistory, User, Region, Province, Regency
         from sqlalchemy import func
         from datetime import datetime, timedelta
         import collections, re
 
         now = datetime.utcnow()
         week_ago = now - timedelta(days=7)
-        chats = ChatHistory.query.filter(ChatHistory.created_at >= week_ago).all()
+
+        # Province/Regency filter
+        selected_region = request.args.get('region', '').strip()  # regency name
+        selected_province_id = request.args.get('province_id', '').strip()
+        province_obj = None
+        if selected_region and not selected_province_id:
+            # infer province from regency name for UI selection
+            reg_obj = Regency.query.filter(Regency.name == selected_region).first()
+            if reg_obj:
+                selected_province_id = str(reg_obj.province_id)
+        if selected_province_id:
+            province_obj = Province.query.get(int(selected_province_id))
+
+        # apply filters
+        if selected_region:
+            chats = ChatHistory.query.join(User, ChatHistory.user_id == User.id) \
+                .filter(ChatHistory.created_at >= week_ago, User.region == selected_region).all()
+        elif selected_province_id:
+            chats = ChatHistory.query.join(User, ChatHistory.user_id == User.id) \
+                .join(Regency, Regency.name == User.region) \
+                .filter(ChatHistory.created_at >= week_ago, Regency.province_id == int(selected_province_id)).all()
+        else:
+            chats = ChatHistory.query.filter(ChatHistory.created_at >= week_ago).all()
 
         jumlah_pertanyaan = len(chats)
-        all_questions = ' '.join([c.question for c in chats]).lower()
-        stopwords = set(['dan','atau','yang','di','ke','dari','untuk','pada','dengan','apa','bagaimana','adalah','saya','ini','itu','the','of','in','to','a','is','are','it','as','by','an','be','on','for','was','were','has','have','had','will','can','petani','chatbot'])
-        keywords = re.findall(r'\b\w+\b', all_questions)
-        keywords = [w for w in keywords if w not in stopwords and len(w) > 2]
-        counter = collections.Counter(keywords)
-        top_topics = counter.most_common(5)
 
-        # All region & topic for filter
-        all_regions = sorted(set(u.region for u in User.query.filter(User.region != None)))
-        all_topics = sorted(set([t[0] for t in counter.most_common(15)]))
+        # Build phrase counts over last week
+        phrase_counter = _collections.Counter()
+        for c in chats:
+            phrase_counter.update(extract_phrases(c.question))
+        # fallback: if no phrases at all, use keywords excluding stopwords
+        if not phrase_counter:
+            all_questions = ' '.join([c.question or '' for c in chats]).lower()
+            keywords = re.findall(r'\b\w+\b', all_questions)
+            keywords = [w for w in keywords if w not in STOPWORDS and len(w) > 2]
+            phrase_counter = _collections.Counter(keywords)
+        top_topics = phrase_counter.most_common(5)
+
+        # All region & topic for filter (union Region master + user regions)
+        user_regions = [u.region for u in User.query.filter(User.region != None).with_entities(User.region).all()]
+        master_regions = [r.name for r in Region.query.order_by(Region.name.asc()).all()]
+        all_regions = sorted(set([r for r in user_regions if r] + master_regions))
+        all_topics = [t for t, _ in phrase_counter.most_common(15)]
 
         # All chats for table (join user)
         user_map = {u.id: u for u in User.query.all()}
 
         def extract_topik(q):
-            # Ambil kata kunci/topik pertama yang bukan stopword
-            for w in re.findall(r'\b\w+\b', (q or '').lower()):
-                if w not in stopwords and len(w) > 2:
-                    return w
-            return '-'
+            return extract_best_phrase(q, global_phrase_counts=phrase_counter)
 
         all_chats = [
             {
@@ -124,21 +211,18 @@ def register_routes(app):
         ]
 
         # Insight perilaku pengguna
-        import collections as _collections
-        jam_counter = _collections.Counter([c.created_at.hour for c in chats])
+        jam_counter = _collections.Counter([c.created_at.hour for c in chats if c.created_at])
         jam_aktif_tertinggi = f"{jam_counter.most_common(1)[0][0]}:00" if jam_counter else '-'
-        user_counter = _collections.Counter([c.user_id for c in chats])
+        user_counter = _collections.Counter([c.user_id for c in chats if c.user_id])
         rata2_pertanyaan_per_user = f"{(jumlah_pertanyaan/len(user_counter)):.2f}" if user_counter else '-'
-        user_paling_aktif = user_map[user_counter.most_common(1)[0][0]].name if user_counter else '-'
 
-        # Lokasi untuk peta
-        user_ids = set(c.user_id for c in chats)
-        locations = User.query.filter(User.id.in_(user_ids), User.latitude != None, User.longitude != None).with_entities(User.latitude, User.longitude, User.region, User.name).all()
-        locations_json = [
-            {"lat": float(lat), "lon": float(lon), "region": region, "name": name}
-            for lat, lon, region, name in locations
-        ]
-        wilayah_aktif = ', '.join(sorted(set(l["region"] for l in locations_json if l["region"]) )) if locations_json else '-'
+        # Wilayah aktif (tanpa koordinat atau username)
+        regions_in_chats = sorted(set(
+            (user_map[c.user_id].region if (c.user_id in user_map and user_map[c.user_id].region) else None)
+            for c in chats
+        ))
+        regions_in_chats = [r for r in regions_in_chats if r]
+        wilayah_aktif = ', '.join(regions_in_chats) if regions_in_chats else '-'
 
         # Early Warning System (setelah data tersedia)
         ews = []
@@ -167,14 +251,14 @@ def register_routes(app):
             jumlah_pertanyaan=jumlah_pertanyaan,
             top_topics=top_topics,
             wilayah_aktif=wilayah_aktif,
-            locations_json=locations_json,
             all_regions=all_regions,
             all_topics=all_topics,
             all_chats=all_chats,
             jam_aktif_tertinggi=jam_aktif_tertinggi,
             rata2_pertanyaan_per_user=rata2_pertanyaan_per_user,
-            user_paling_aktif=user_paling_aktif,
-            ews=ews
+            ews=ews,
+            selected_region=selected_region,
+            selected_province_id=selected_province_id or ''
         )
 
 
@@ -290,7 +374,8 @@ def register_routes(app):
             return jsonify({
                 'reply': response_text,
                 'sources': sources,
-                'processing_time': round(processing_time, 2)
+                'processing_time': round(processing_time, 2),
+                'session_id': session_id
             })
         except Exception as e:
             error_id = int(time.time())
@@ -338,12 +423,150 @@ def register_routes(app):
                 'message': str(e)
             }), 500
 
-    # --- Admin Analytics APIs ---
+    @app.route('/api/admin/provinces', methods=['GET'])
+    def api_admin_provinces():
+        if 'user_id' not in session or session.get('user_role') != 'admin':
+            return jsonify({'error': 'Unauthorized'}), 401
+        from .models import Province, Regency
+        provs = Province.query.order_by(Province.name.asc()).all()
+        if not provs:
+            # Auto-seed once from public API if empty
+            try:
+                import requests
+                base = 'https://emsifa.github.io/api-wilayah-indonesia/api'
+                # fetch provinces
+                resp = requests.get(f'{base}/provinces.json', timeout=20)
+                resp.raise_for_status()
+                provinces_json = resp.json() or []
+                for pj in provinces_json:
+                    name = pj.get('name')
+                    if not name:
+                        continue
+                    if not Province.query.filter_by(name=name).first():
+                        db.session.add(Province(name=name))
+                db.session.commit()
+                # fetch regencies per province
+                provs = Province.query.order_by(Province.name.asc()).all()
+                for p in provs:
+                    # find id from API by matching name
+                    api_pid = None
+                    for pj in provinces_json:
+                        if pj.get('name') == p.name:
+                            api_pid = pj.get('id')
+                            break
+                    if not api_pid:
+                        continue
+                    rresp = requests.get(f'{base}/regencies/{api_pid}.json', timeout=20)
+                    if rresp.status_code != 200:
+                        continue
+                    rjson = rresp.json() or []
+                    for rj in rjson:
+                        rname = rj.get('name')
+                        if not rname:
+                            continue
+                        exists = Regency.query.filter_by(name=rname, province_id=p.id).first()
+                        if not exists:
+                            db.session.add(Regency(name=rname, province_id=p.id))
+                db.session.commit()
+                provs = Province.query.order_by(Province.name.asc()).all()
+            except Exception:
+                db.session.rollback()
+                # fall back to empty if seeding fails
+        return jsonify({'provinces': [{'id': p.id, 'name': p.name} for p in provs]})
+
+    @app.route('/api/admin/seed-indonesia-regions', methods=['POST'])
+    def api_admin_seed_indonesia_regions():
+        if 'user_id' not in session or session.get('user_role') != 'admin':
+            return jsonify({'error': 'Unauthorized'}), 401
+        from .models import Province, Regency
+        try:
+            import requests
+            base = 'https://emsifa.github.io/api-wilayah-indonesia/api'
+            resp = requests.get(f'{base}/provinces.json', timeout=30)
+            resp.raise_for_status()
+            provinces_json = resp.json() or []
+            name_to_id = {}
+            for pj in provinces_json:
+                name = pj.get('name')
+                if not name:
+                    continue
+                p = Province.query.filter_by(name=name).first()
+                if not p:
+                    p = Province(name=name)
+                    db.session.add(p)
+                    db.session.flush()
+                name_to_id[name] = (pj.get('id'), p.id)
+            db.session.commit()
+            count_regs = 0
+            for name, (api_id, db_id) in name_to_id.items():
+                try:
+                    rresp = requests.get(f'{base}/regencies/{api_id}.json', timeout=30)
+                    rresp.raise_for_status()
+                    rjson = rresp.json() or []
+                    for rj in rjson:
+                        rname = rj.get('name')
+                        if not rname:
+                            continue
+                        exists = Regency.query.filter_by(name=rname, province_id=db_id).first()
+                        if not exists:
+                            db.session.add(Regency(name=rname, province_id=db_id))
+                            count_regs += 1
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+                    continue
+            return jsonify({'ok': True, 'provinces': len(name_to_id), 'regencies_added': count_regs})
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': 'Seeding gagal'}), 500
+
+    @app.route('/api/admin/regencies', methods=['GET'])
+    def api_admin_regencies():
+        if 'user_id' not in session or session.get('user_role') != 'admin':
+            return jsonify({'error': 'Unauthorized'}), 401
+        from .models import Regency
+        try:
+            pid = int(request.args.get('province_id', '0'))
+        except Exception:
+            pid = 0
+        if not pid:
+            return jsonify({'regencies': []})
+        regs = Regency.query.filter_by(province_id=pid).order_by(Regency.name.asc()).all()
+        return jsonify({'regencies': [{'id': r.id, 'name': r.name} for r in regs]})
+
+    # --- Regions master management ---
+    @app.route('/api/admin/regions', methods=['GET', 'POST'])
+    def api_admin_regions():
+        if 'user_id' not in session or session.get('user_role') != 'admin':
+            return jsonify({'error': 'Unauthorized'}), 401
+        from .models import Region, User
+        if request.method == 'GET':
+            master = [r.name for r in Region.query.order_by(Region.name.asc()).all()]
+            user_regions = [r[0] for r in User.query.filter(User.region != None).with_entities(User.region).distinct().all()]
+            all_regions = sorted(set([*(master or []), *([ur for ur in user_regions if ur] or [])]))
+            return jsonify({'regions': all_regions, 'master': master})
+        # POST: add new region
+        try:
+            data = request.get_json() or {}
+            name = (data.get('name') or '').strip()
+            if not name:
+                return jsonify({'error': 'Nama wilayah wajib diisi'}), 400
+            exists = Region.query.filter(Region.name.ilike(name)).first()
+            if exists:
+                return jsonify({'ok': True, 'message': 'Wilayah sudah ada'}), 200
+            reg = Region(name=name)
+            db.session.add(reg)
+            db.session.commit()
+            return jsonify({'ok': True, 'name': name}), 201
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': 'Gagal menambah wilayah'}), 500
+
     @app.route('/api/admin/trends', methods=['GET'])
     def api_admin_trends():
         if 'user_id' not in session or session.get('user_role') != 'admin':
             return jsonify({'error': 'Unauthorized'}), 401
-        from .models import ChatHistory
+        from .models import ChatHistory, User, Regency
         from datetime import timedelta
         import collections, re
 
@@ -359,17 +582,29 @@ def register_routes(app):
         except Exception:
             top_k = 5
 
+        region_filter = request.args.get('region', '').strip()
+        province_id = request.args.get('province_id', '').strip()
+
         now = datetime.utcnow()
         start_time = now - timedelta(days=days)
-        chats = ChatHistory.query.filter(ChatHistory.created_at >= start_time).all()
+        if region_filter:
+            chats = ChatHistory.query.join(User, ChatHistory.user_id == User.id) \
+                .filter(ChatHistory.created_at >= start_time, User.region == region_filter).all()
+        elif province_id:
+            chats = ChatHistory.query.join(User, ChatHistory.user_id == User.id) \
+                .join(Regency, Regency.name == User.region) \
+                .filter(ChatHistory.created_at >= start_time, Regency.province_id == int(province_id)).all()
+        else:
+            chats = ChatHistory.query.filter(ChatHistory.created_at >= start_time).all()
 
-        stopwords = set(['dan','atau','yang','di','ke','dari','untuk','pada','dengan','apa','bagaimana','adalah','saya','ini','itu','the','of','in','to','a','is','are','it','as','by','an','be','on','for','was','were','has','have','had','will','can','petani','chatbot'])
-
-        def extract_topic(q):
-            for w in re.findall(r'\b\w+\b', (q or '').lower()):
-                if w not in stopwords and len(w) > 2:
-                    return w
-            return '-'
+        # Compute phrase counts across chats and choose a best phrase per chat
+        phrase_counts = _collections.Counter()
+        chat_best_phrase = {}
+        for c in chats:
+            phs = extract_phrases(c.question)
+            phrase_counts.update(phs)
+        for c in chats:
+            chat_best_phrase[c.id] = extract_best_phrase(c.question, global_phrase_counts=phrase_counts)
 
         def bucket_start(dt):
             if period == 'day':
@@ -388,7 +623,7 @@ def register_routes(app):
             if not c.created_at:
                 continue
             bucket = bucket_start(c.created_at)
-            topic = extract_topic(c.question)
+            topic = chat_best_phrase.get(c.id, '-')
             if topic == '-':
                 continue
             totals_by_topic[topic] += 1
@@ -448,36 +683,47 @@ def register_routes(app):
             days = int(request.args.get('days', '30'))
         except Exception:
             days = 30
+        region_filter = request.args.get('region', '').strip()
+        province_id = request.args.get('province_id', '').strip()
 
         if not topic:
             return jsonify({'markers': []})
 
-        stopwords = set(['dan','atau','yang','di','ke','dari','untuk','pada','dengan','apa','bagaimana','adalah','saya','ini','itu','the','of','in','to','a','is','are','it','as','by','an','be','on','for','was','were','has','have','had','will','can','petani','chatbot'])
-        def extract_topic(q):
-            for w in re.findall(r'\b\w+\b', (q or '').lower()):
-                if w not in stopwords and len(w) > 2:
-                    return w
-            return '-'
-
         now = datetime.utcnow()
         start_time = now - timedelta(days=days)
-        chats = ChatHistory.query.filter(ChatHistory.created_at >= start_time).all()
+        if region_filter:
+            chats = ChatHistory.query.join(User, ChatHistory.user_id == User.id) \
+                .filter(ChatHistory.created_at >= start_time, User.region == region_filter).all()
+        elif province_id:
+            from .models import Regency
+            chats = ChatHistory.query.join(User, ChatHistory.user_id == User.id) \
+                .join(Regency, Regency.name == User.region) \
+                .filter(ChatHistory.created_at >= start_time, Regency.province_id == int(province_id)).all()
+        else:
+            chats = ChatHistory.query.filter(ChatHistory.created_at >= start_time).all()
 
         counts_by_user = collections.Counter()
         for c in chats:
             if not c.user_id:
                 continue
-            if extract_topic(c.question) == topic:
+            phrases = extract_phrases(c.question)
+            if topic in phrases:
                 counts_by_user[c.user_id] += 1
 
         if not counts_by_user:
             return jsonify({'markers': []})
 
-        users = User.query.filter(
+        users_query = User.query.filter(
             User.id.in_(list(counts_by_user.keys())),
             User.latitude != None,
             User.longitude != None
-        ).with_entities(User.id, User.latitude, User.longitude, User.region).all()
+        )
+        if region_filter:
+            users_query = users_query.filter(User.region == region_filter)
+        elif province_id:
+            from .models import Regency
+            users_query = users_query.join(Regency, Regency.name == User.region).filter(Regency.province_id == int(province_id))
+        users = users_query.with_entities(User.id, User.latitude, User.longitude, User.region).all()
 
         markers_map = {}
         for uid, lat, lon, region in users:
@@ -491,6 +737,34 @@ def register_routes(app):
         ]
         return jsonify({'markers': markers})
 
+    # --- User location update API ---
+    @app.route('/api/user/location', methods=['POST'])
+    def api_user_location():
+        if 'user_id' not in session:
+            return jsonify({'error': 'Unauthorized'}), 401
+        try:
+            if not request.is_json:
+                return jsonify({'error': 'Invalid payload'}), 400
+            data = request.get_json() or {}
+            lat = data.get('lat')
+            lon = data.get('lon')
+            region = data.get('region')
+            if lat is None or lon is None:
+                return jsonify({'error': 'lat/lon required'}), 400
+            lat = float(lat)
+            lon = float(lon)
+            user = User.query.get(session.get('user_id'))
+            if not user:
+                return jsonify({'error': 'User not found'}), 404
+            user.latitude = lat
+            user.longitude = lon
+            if isinstance(region, str) and region.strip():
+                user.region = region.strip()
+            db.session.commit()
+            return jsonify({'ok': True})
+        except Exception as e:
+            logging.exception('[ERROR] updating user location')
+            return jsonify({'error': 'Failed to update location'}), 500
 
     @app.route('/init-db')
     def init_db():
