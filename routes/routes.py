@@ -141,7 +141,7 @@ def register_routes(app):
     def dashboard_admin():
         if 'user_id' not in session or session.get('user_role') != 'admin':
             return redirect(url_for('login'))
-        from .models import ChatHistory, User
+        from .models import ChatHistory, User, Region
         from sqlalchemy import func
         from datetime import datetime, timedelta
         import collections, re
@@ -172,8 +172,10 @@ def register_routes(app):
             phrase_counter = _collections.Counter(keywords)
         top_topics = phrase_counter.most_common(5)
 
-        # All region & topic for filter
-        all_regions = sorted(set(u.region for u in User.query.filter(User.region != None)))
+        # All region & topic for filter (union Region master + user regions)
+        user_regions = [u.region for u in User.query.filter(User.region != None).with_entities(User.region).all()]
+        master_regions = [r.name for r in Region.query.order_by(Region.name.asc()).all()]
+        all_regions = sorted(set([r for r in user_regions if r] + master_regions))
         all_topics = [t for t, _ in phrase_counter.most_common(15)]
 
         # All chats for table (join user)
@@ -406,7 +408,34 @@ def register_routes(app):
                 'message': str(e)
             }), 500
 
-    # --- Admin Analytics APIs ---
+    # --- Regions master management ---
+    @app.route('/api/admin/regions', methods=['GET', 'POST'])
+    def api_admin_regions():
+        if 'user_id' not in session or session.get('user_role') != 'admin':
+            return jsonify({'error': 'Unauthorized'}), 401
+        from .models import Region, User
+        if request.method == 'GET':
+            master = [r.name for r in Region.query.order_by(Region.name.asc()).all()]
+            user_regions = [r[0] for r in User.query.filter(User.region != None).with_entities(User.region).distinct().all()]
+            all_regions = sorted(set([*(master or []), *([ur for ur in user_regions if ur] or [])]))
+            return jsonify({'regions': all_regions, 'master': master})
+        # POST: add new region
+        try:
+            data = request.get_json() or {}
+            name = (data.get('name') or '').strip()
+            if not name:
+                return jsonify({'error': 'Nama wilayah wajib diisi'}), 400
+            exists = Region.query.filter(Region.name.ilike(name)).first()
+            if exists:
+                return jsonify({'ok': True, 'message': 'Wilayah sudah ada'}), 200
+            reg = Region(name=name)
+            db.session.add(reg)
+            db.session.commit()
+            return jsonify({'ok': True, 'name': name}), 201
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': 'Gagal menambah wilayah'}), 500
+
     @app.route('/api/admin/trends', methods=['GET'])
     def api_admin_trends():
         if 'user_id' not in session or session.get('user_role') != 'admin':
