@@ -701,6 +701,12 @@ def register_routes(app):
         for c in chats:
             phs = extract_phrases(c.question)
             phrase_counts.update(phs)
+        # Fallback to keywords when phrase extraction yields nothing
+        if not phrase_counts:
+            all_questions = ' '.join([(c.question or '') for c in chats]).lower()
+            keywords = re.findall(r'\b\w+\b', all_questions)
+            keywords = [w for w in keywords if w not in STOPWORDS and len(w) > 2]
+            phrase_counts = _collections.Counter(keywords)
         for c in chats:
             chat_best_phrase[c.id] = extract_best_phrase(c.question, global_phrase_counts=phrase_counts)
 
@@ -731,26 +737,35 @@ def register_routes(app):
         top_topics = [t for t, _ in totals_by_topic.most_common(top_k)]
         # Build sorted bucket labels
         labels = sorted(counts.keys())
-        # Ensure continuous buckets even if no data
+        # Ensure continuous buckets and also build when no data
+        def next_bucket(d):
+            if period == 'day':
+                return d + timedelta(days=1)
+            if period == 'week':
+                return d + timedelta(days=7)
+            # month increment
+            year = d.year + (1 if d.month == 12 else 0)
+            month = 1 if d.month == 12 else d.month + 1
+            return datetime(year, month, 1)
         if labels:
             filled = []
             cursor = labels[0]
             last = labels[-1]
-            step = timedelta(days=1 if period == 'day' else (7 if period == 'week' else 32))
-            # For month, handle varying days by moving to first of next month
-            def next_bucket(d):
-                if period == 'day':
-                    return d + timedelta(days=1)
-                if period == 'week':
-                    return d + timedelta(days=7)
-                # month increment
-                year = d.year + (1 if d.month == 12 else 0)
-                month = 1 if d.month == 12 else d.month + 1
-                return datetime(year, month, 1)
             while cursor <= last:
                 filled.append(cursor)
                 cursor = next_bucket(cursor)
             labels = filled
+        else:
+            # No data: still generate timeline buckets for the selected range
+            start_bucket = bucket_start(start_time)
+            end_bucket = bucket_start(now)
+            cursor = start_bucket
+            labels = []
+            max_steps = 1000
+            while cursor <= end_bucket and max_steps > 0:
+                labels.append(cursor)
+                cursor = next_bucket(cursor)
+                max_steps -= 1
 
         # Build matrix
         matrix = []
@@ -835,11 +850,14 @@ def register_routes(app):
             chats = ChatHistory.query.filter(ChatHistory.created_at >= start_time).all()
 
         counts_by_user = collections.Counter()
+        normalized_topic = topic.strip().lower()
         for c in chats:
             if not c.user_id:
                 continue
-            phrases = extract_phrases(c.question)
-            if topic in phrases:
+            phrases = [p.lower() for p in extract_phrases(c.question)]
+            # Also check best phrase fallback to handle single-word topics
+            best = extract_best_phrase(c.question).lower() if c.question else '-'
+            if normalized_topic in phrases or normalized_topic == best:
                 counts_by_user[c.user_id] += 1
 
         if not counts_by_user:
@@ -847,8 +865,8 @@ def register_routes(app):
 
         users_query = User.query.filter(
             User.id.in_(list(counts_by_user.keys())),
-            User.latitude != None,
-            User.longitude != None
+            User.latitude.isnot(None),
+            User.longitude.isnot(None)
         )
         if region_filter:
             users_query = users_query.filter(User.region == region_filter)
