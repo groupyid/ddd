@@ -78,28 +78,6 @@ def register_routes(app):
 
     @app.route('/dashboard_admin')
     def dashboard_admin():
-        # Early Warning System: deteksi topik yang sering muncul di wilayah tertentu
-        # Threshold: minimal 3 user berbeda membahas topik sama di wilayah sama dalam 7 hari
-        ews = []
-        # Buat mapping: {(region, topik): set(user_id), count}
-        ews_map = {}
-        for c in chats:
-            user = user_map.get(c.user_id)
-            region = user.region if user and user.region else '-'
-            topik = extract_topik(c.question)
-            key = (region, topik)
-            if key not in ews_map:
-                ews_map[key] = {'users': set(), 'count': 0}
-            ews_map[key]['users'].add(c.user_id)
-            ews_map[key]['count'] += 1
-        for (region, topik), v in ews_map.items():
-            if region != '-' and topik != '-' and len(v['users']) >= 3 and v['count'] >= 5:
-                ews.append({
-                    'region': region,
-                    'topik': topik,
-                    'user_count': len(v['users']),
-                    'chat_count': v['count']
-                })
         if 'user_id' not in session or session.get('user_role') != 'admin':
             return redirect(url_for('login'))
         from .models import ChatHistory, User
@@ -125,12 +103,14 @@ def register_routes(app):
 
         # All chats for table (join user)
         user_map = {u.id: u for u in User.query.all()}
+
         def extract_topik(q):
             # Ambil kata kunci/topik pertama yang bukan stopword
             for w in re.findall(r'\b\w+\b', (q or '').lower()):
                 if w not in stopwords and len(w) > 2:
                     return w
             return '-'
+
         all_chats = [
             {
                 'question': c.question,
@@ -144,9 +124,10 @@ def register_routes(app):
         ]
 
         # Insight perilaku pengguna
-        jam_counter = collections.Counter([c.created_at.hour for c in chats])
+        import collections as _collections
+        jam_counter = _collections.Counter([c.created_at.hour for c in chats])
         jam_aktif_tertinggi = f"{jam_counter.most_common(1)[0][0]}:00" if jam_counter else '-'
-        user_counter = collections.Counter([c.user_id for c in chats])
+        user_counter = _collections.Counter([c.user_id for c in chats])
         rata2_pertanyaan_per_user = f"{(jumlah_pertanyaan/len(user_counter)):.2f}" if user_counter else '-'
         user_paling_aktif = user_map[user_counter.most_common(1)[0][0]].name if user_counter else '-'
 
@@ -157,7 +138,29 @@ def register_routes(app):
             {"lat": float(lat), "lon": float(lon), "region": region, "name": name}
             for lat, lon, region, name in locations
         ]
-        wilayah_aktif = ', '.join(sorted(set(l["region"] for l in locations_json if l["region"])) ) if locations_json else '-'
+        wilayah_aktif = ', '.join(sorted(set(l["region"] for l in locations_json if l["region"]) )) if locations_json else '-'
+
+        # Early Warning System (setelah data tersedia)
+        ews = []
+        ews_map = {}
+        for c in chats:
+            user = user_map.get(c.user_id)
+            region = user.region if user and user.region else '-'
+            topik = extract_topik(c.question)
+            key = (region, topik)
+            if key not in ews_map:
+                ews_map[key] = {'users': set(), 'count': 0}
+            if c.user_id:
+                ews_map[key]['users'].add(c.user_id)
+            ews_map[key]['count'] += 1
+        for (region, topik), v in ews_map.items():
+            if region != '-' and topik != '-' and len(v['users']) >= 3 and v['count'] >= 5:
+                ews.append({
+                    'region': region,
+                    'topik': topik,
+                    'user_count': len(v['users']),
+                    'chat_count': v['count']
+                })
 
         return render_template('dashboard_admin.html',
             user=session.get('user_name'),
@@ -334,6 +337,159 @@ def register_routes(app):
                 'status': 'error',
                 'message': str(e)
             }), 500
+
+    # --- Admin Analytics APIs ---
+    @app.route('/api/admin/trends', methods=['GET'])
+    def api_admin_trends():
+        if 'user_id' not in session or session.get('user_role') != 'admin':
+            return jsonify({'error': 'Unauthorized'}), 401
+        from .models import ChatHistory
+        from datetime import timedelta
+        import collections, re
+
+        period = request.args.get('period', 'week').lower()  # day|week|month
+        if period not in {'day', 'week', 'month'}:
+            period = 'week'
+        try:
+            days = int(request.args.get('days', '90'))
+        except Exception:
+            days = 90
+        try:
+            top_k = int(request.args.get('top_k', '5'))
+        except Exception:
+            top_k = 5
+
+        now = datetime.utcnow()
+        start_time = now - timedelta(days=days)
+        chats = ChatHistory.query.filter(ChatHistory.created_at >= start_time).all()
+
+        stopwords = set(['dan','atau','yang','di','ke','dari','untuk','pada','dengan','apa','bagaimana','adalah','saya','ini','itu','the','of','in','to','a','is','are','it','as','by','an','be','on','for','was','were','has','have','had','will','can','petani','chatbot'])
+
+        def extract_topic(q):
+            for w in re.findall(r'\b\w+\b', (q or '').lower()):
+                if w not in stopwords and len(w) > 2:
+                    return w
+            return '-'
+
+        def bucket_start(dt):
+            if period == 'day':
+                return datetime(dt.year, dt.month, dt.day)
+            if period == 'week':
+                # set to Monday 00:00
+                monday = dt - timedelta(days=dt.weekday())
+                return datetime(monday.year, monday.month, monday.day)
+            # month
+            return datetime(dt.year, dt.month, 1)
+
+        # Aggregate counts
+        totals_by_topic = collections.Counter()
+        counts = {}
+        for c in chats:
+            if not c.created_at:
+                continue
+            bucket = bucket_start(c.created_at)
+            topic = extract_topic(c.question)
+            if topic == '-':
+                continue
+            totals_by_topic[topic] += 1
+            counts.setdefault(bucket, {}).setdefault(topic, 0)
+            counts[bucket][topic] += 1
+
+        top_topics = [t for t, _ in totals_by_topic.most_common(top_k)]
+        # Build sorted bucket labels
+        labels = sorted(counts.keys())
+        # Ensure continuous buckets even if no data
+        if labels:
+            filled = []
+            cursor = labels[0]
+            last = labels[-1]
+            step = timedelta(days=1 if period == 'day' else (7 if period == 'week' else 32))
+            # For month, handle varying days by moving to first of next month
+            def next_bucket(d):
+                if period == 'day':
+                    return d + timedelta(days=1)
+                if period == 'week':
+                    return d + timedelta(days=7)
+                # month increment
+                year = d.year + (1 if d.month == 12 else 0)
+                month = 1 if d.month == 12 else d.month + 1
+                return datetime(year, month, 1)
+            while cursor <= last:
+                filled.append(cursor)
+                cursor = next_bucket(cursor)
+            labels = filled
+
+        # Build matrix
+        matrix = []
+        for topic in top_topics:
+            row = []
+            for b in labels:
+                row.append(counts.get(b, {}).get(topic, 0))
+            matrix.append(row)
+
+        # Serialize labels as ISO date strings
+        label_strings = [b.strftime('%Y-%m-%d') for b in labels]
+        return jsonify({
+            'labels': label_strings,
+            'topics': top_topics,
+            'matrix': matrix
+        })
+
+    @app.route('/api/admin/topic-distribution', methods=['GET'])
+    def api_admin_topic_distribution():
+        if 'user_id' not in session or session.get('user_role') != 'admin':
+            return jsonify({'error': 'Unauthorized'}), 401
+        from .models import ChatHistory, User
+        from datetime import timedelta
+        import collections, re
+
+        topic = request.args.get('topic', '').strip().lower()
+        try:
+            days = int(request.args.get('days', '30'))
+        except Exception:
+            days = 30
+
+        if not topic:
+            return jsonify({'markers': []})
+
+        stopwords = set(['dan','atau','yang','di','ke','dari','untuk','pada','dengan','apa','bagaimana','adalah','saya','ini','itu','the','of','in','to','a','is','are','it','as','by','an','be','on','for','was','were','has','have','had','will','can','petani','chatbot'])
+        def extract_topic(q):
+            for w in re.findall(r'\b\w+\b', (q or '').lower()):
+                if w not in stopwords and len(w) > 2:
+                    return w
+            return '-'
+
+        now = datetime.utcnow()
+        start_time = now - timedelta(days=days)
+        chats = ChatHistory.query.filter(ChatHistory.created_at >= start_time).all()
+
+        counts_by_user = collections.Counter()
+        for c in chats:
+            if not c.user_id:
+                continue
+            if extract_topic(c.question) == topic:
+                counts_by_user[c.user_id] += 1
+
+        if not counts_by_user:
+            return jsonify({'markers': []})
+
+        users = User.query.filter(
+            User.id.in_(list(counts_by_user.keys())),
+            User.latitude != None,
+            User.longitude != None
+        ).with_entities(User.id, User.latitude, User.longitude, User.region).all()
+
+        markers_map = {}
+        for uid, lat, lon, region in users:
+            key = (float(lat), float(lon), region or '-')
+            markers_map.setdefault(key, 0)
+            markers_map[key] += counts_by_user.get(uid, 0)
+
+        markers = [
+            { 'lat': k[0], 'lon': k[1], 'region': k[2], 'count': v }
+            for k, v in markers_map.items()
+        ]
+        return jsonify({'markers': markers})
 
 
     @app.route('/init-db')

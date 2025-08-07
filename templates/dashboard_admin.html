@@ -34,9 +34,26 @@
                 </div>
                 {% endif %}
                 <div style="display:flex;flex-wrap:wrap;gap:32px;align-items:flex-start;">
-                    <div style="flex:1;min-width:320px;max-width:420px;">
-                        <h2>Tren Topik Permasalahan</h2>
-                        <div id="tren-topik">
+                    <div style="flex:1;min-width:320px;max-width:520px;">
+                        <h2>Grafik Tren Topik</h2>
+                        <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
+                            <label for="trend-period" style="font-size:0.95em;color:#555;">Periode</label>
+                            <select id="trend-period" style="padding:6px 10px;border-radius:8px;border:1px solid #ddd;">
+                                <option value="day">Harian</option>
+                                <option value="week" selected>Mingguan</option>
+                                <option value="month">Bulanan</option>
+                            </select>
+                            <label for="trend-days" style="font-size:0.95em;color:#555;">Rentang</label>
+                            <select id="trend-days" style="padding:6px 10px;border-radius:8px;border:1px solid #ddd;">
+                                <option value="30">30 hari</option>
+                                <option value="90" selected>90 hari</option>
+                                <option value="180">180 hari</option>
+                            </select>
+                        </div>
+                        <div style="background:#f7fafc;border-radius:12px;padding:12px;">
+                            <canvas id="trendChart" height="200"></canvas>
+                        </div>
+                        <div id="tren-topik" style="margin-top:12px;">
                             {% if top_topics %}
                             <ol style="padding-left:20px;">
                                 {% for topic, count in top_topics %}
@@ -47,7 +64,7 @@
                             <p>Belum ada data tren topik minggu ini.</p>
                             {% endif %}
                         </div>
-                        <h2>Insight Statistik</h2>
+                        <h2 style="margin-top:20px;">Insight Statistik</h2>
                         <div id="statistik-pengguna">
                             <ul>
                                 <li>Jumlah pertanyaan minggu ini: <b>{{ jumlah_pertanyaan }}</b></li>
@@ -56,18 +73,31 @@
                         </div>
                     </div>
                     <div style="flex:1;min-width:320px;max-width:520px;">
-                        <h2>Peta Sebaran Lokasi User</h2>
+                        <h2>Peta Sebaran Topik Pertanyaan</h2>
+                        <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
+                            <label for="filter-topic" style="font-size:0.95em;color:#555;">Topik</label>
+                            <select id="filter-topic" style="padding:6px 10px;border-radius:8px;border:1px solid #ddd;min-width:160px;">
+                                <option value="">Semua topik</option>
+                                {% for t in all_topics %}
+                                <option value="{{ t }}">{{ t }}</option>
+                                {% endfor %}
+                            </select>
+                            <label for="map-days" style="font-size:0.95em;color:#555;">Rentang</label>
+                            <select id="map-days" style="padding:6px 10px;border-radius:8px;border:1px solid #ddd;">
+                                <option value="30" selected>30 hari</option>
+                                <option value="90">90 hari</option>
+                                <option value="180">180 hari</option>
+                            </select>
+                        </div>
                         <div id="peta-sebaran" style="background:#f7fafc;border-radius:12px;padding:16px;">
+                            <div id="map" style="height: 360px; width: 100%; border-radius: 10px;"></div>
+                            <div style="font-size:0.95em;color:#888;margin-top:8px;">Titik: lokasi user aktif atau bubble berukuran sesuai jumlah pertanyaan untuk topik terpilih</div>
                             {% if locations_json and locations_json|length > 0 %}
-                                <div id="map" style="height: 320px; width: 100%; border-radius: 10px;"></div>
-                                <div style="font-size:0.95em;color:#888;margin-top:8px;">Titik: lokasi user yang aktif minggu ini</div>
-                                <ul style="font-size:0.98em;margin-top:10px;">
-                                    {% for loc in locations_json %}
-                                    <li>{{ loc.name }}{% if loc.region %} ({{ loc.region }}){% endif %}: <span style="color:#388e3c">{{ loc.lat }}, {{ loc.lon }}</span></li>
-                                    {% endfor %}
-                                </ul>
-                            {% else %}
-                                <p>Belum ada data lokasi user minggu ini.</p>
+                            <ul id="default-locations" style="font-size:0.98em;margin-top:10px;">
+                                {% for loc in locations_json %}
+                                <li>{{ loc.name }}{% if loc.region %} ({{ loc.region }}){% endif %}: <span style="color:#388e3c">{{ loc.lat }}, {{ loc.lon }}</span></li>
+                                {% endfor %}
+                            </ul>
                             {% endif %}
                         </div>
                     </div>
@@ -85,21 +115,143 @@
             </div>
         </div>
     </div>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-    var markers = {{ locations_json|tojson|safe }};
-    if (markers.length > 0) {
-        var map = L.map('map').setView([markers[0].lat, markers[0].lon], 5);
+    // ============ Chart: Tren Topik ============
+    const trendCtx = document.getElementById('trendChart').getContext('2d');
+    let trendChart = null;
+    const periodEl = document.getElementById('trend-period');
+    const daysEl = document.getElementById('trend-days');
+
+    function randomColor(seed) {
+        // simple deterministic color per topic
+        let h = 0;
+        for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) % 360;
+        const s = 70, l = 50;
+        return `hsl(${h}, ${s}%, ${l}%)`;
+    }
+
+    async function loadTrendChart() {
+        const period = periodEl.value;
+        const days = daysEl.value;
+        const res = await fetch(`/api/admin/trends?period=${encodeURIComponent(period)}&days=${encodeURIComponent(days)}`);
+        const data = await res.json();
+        const labels = data.labels || [];
+        const topics = data.topics || [];
+        const matrix = data.matrix || [];
+
+        const datasets = topics.map((t, idx) => {
+            const color = randomColor(t + idx);
+            return {
+                label: t,
+                data: matrix[idx] || [],
+                borderColor: color,
+                backgroundColor: color.replace('hsl', 'hsla').replace('%)', '%, 0.15)'),
+                tension: 0.2,
+                fill: true
+            };
+        });
+
+        if (trendChart) trendChart.destroy();
+        trendChart = new Chart(trendCtx, {
+            type: 'line',
+            data: { labels, datasets },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: { position: 'bottom' },
+                    tooltip: { mode: 'index', intersect: false }
+                },
+                interaction: { mode: 'nearest', axis: 'x', intersect: false },
+                scales: {
+                    x: { title: { display: true, text: 'Tanggal' } },
+                    y: { title: { display: true, text: 'Jumlah pertanyaan' }, beginAtZero: true, ticks: { precision: 0 } }
+                }
+            }
+        });
+    }
+
+    periodEl.addEventListener('change', loadTrendChart);
+    daysEl.addEventListener('change', loadTrendChart);
+
+    // ============ Peta: Distribusi Topik ============
+    const defaultMarkers = {{ locations_json|tojson|safe }};
+    let map = null;
+    let markerLayer = null; // for default markers
+    let bubbleLayer = null; // for topic distribution circles
+
+    function initMap() {
+        const center = defaultMarkers.length > 0 ? [defaultMarkers[0].lat, defaultMarkers[0].lon] : [-2.5, 117];
+        map = L.map('map').setView(center, defaultMarkers.length > 0 ? 5 : 4);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             maxZoom: 18,
             attribution: '© OpenStreetMap'
         }).addTo(map);
-        markers.forEach(function(m) {
-            var popup = '<b>' + m.name + '</b>' + (m.region ? ' (' + m.region + ')' : '') + '<br>Lat: ' + m.lat + ', Lon: ' + m.lon;
-            L.marker([m.lat, m.lon]).addTo(map).bindPopup(popup);
-        });
+        markerLayer = L.layerGroup().addTo(map);
+        bubbleLayer = L.layerGroup().addTo(map);
+        renderDefaultMarkers();
     }
+
+    function renderDefaultMarkers() {
+        bubbleLayer.clearLayers();
+        markerLayer.clearLayers();
+        if (defaultMarkers.length === 0) return;
+        const bounds = [];
+        defaultMarkers.forEach(m => {
+            const popup = `<b>${m.name}</b>${m.region ? ' (' + m.region + ')' : ''}<br>Lat: ${m.lat}, Lon: ${m.lon}`;
+            const marker = L.marker([m.lat, m.lon]).bindPopup(popup);
+            marker.addTo(markerLayer);
+            bounds.push([m.lat, m.lon]);
+        });
+        if (bounds.length > 0) map.fitBounds(bounds, { padding: [20, 20] });
+    }
+
+    function radiusFromCount(count) {
+        const base = 6;
+        const scaled = Math.log(count + 1) * 6; // gentle scaling
+        return Math.max(base, scaled);
+    }
+
+    async function renderTopicBubbles(topic, days) {
+        markerLayer.clearLayers();
+        bubbleLayer.clearLayers();
+        if (!topic) {
+            renderDefaultMarkers();
+            return;
+        }
+        const res = await fetch(`/api/admin/topic-distribution?topic=${encodeURIComponent(topic)}&days=${encodeURIComponent(days)}`);
+        const json = await res.json();
+        const markers = json.markers || [];
+        if (markers.length === 0) return;
+        const bounds = [];
+        markers.forEach(m => {
+            const radius = radiusFromCount(m.count);
+            const circle = L.circleMarker([m.lat, m.lon], {
+                radius,
+                color: '#2e7d32',
+                fillColor: '#66bb6a',
+                fillOpacity: 0.6,
+                weight: 1
+            }).bindPopup(`<b>${topic}</b>${m.region ? ' (' + m.region + ')' : ''}<br>Jumlah pertanyaan: <b>${m.count}</b>`);
+            circle.addTo(bubbleLayer);
+            bounds.push([m.lat, m.lon]);
+        });
+        if (bounds.length > 0) map.fitBounds(bounds, { padding: [20, 20] });
+    }
+
+    const topicEl = document.getElementById('filter-topic');
+    const mapDaysEl = document.getElementById('map-days');
+    topicEl.addEventListener('change', () => renderTopicBubbles(topicEl.value, mapDaysEl.value));
+    mapDaysEl.addEventListener('change', () => renderTopicBubbles(topicEl.value, mapDaysEl.value));
+
+    // Initialize on load
+    window.addEventListener('DOMContentLoaded', async () => {
+        initMap();
+        await loadTrendChart();
+    });
     </script>
 </body>
 </html>
