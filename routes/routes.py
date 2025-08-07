@@ -161,6 +161,40 @@ def register_routes(app):
         if selected_province_id:
             province_obj = Province.query.get(int(selected_province_id))
 
+        # Ensure regencies exist for selected province (auto-seed on demand)
+        if selected_province_id:
+            try:
+                pid_int = int(selected_province_id)
+                if Regency.query.filter_by(province_id=pid_int).count() == 0:
+                    import requests
+                    base = 'https://emsifa.github.io/api-wilayah-indonesia/api'
+                    prov = Province.query.get(pid_int)
+                    if prov:
+                        # Map province name to API id
+                        resp = requests.get(f'{base}/provinces.json', timeout=20)
+                        resp.raise_for_status()
+                        provinces_json = resp.json() or []
+                        api_pid = None
+                        for pj in provinces_json:
+                            if pj.get('name') == prov.name:
+                                api_pid = pj.get('id')
+                                break
+                        if api_pid:
+                            rresp = requests.get(f'{base}/regencies/{api_pid}.json', timeout=20)
+                            if rresp.status_code == 200:
+                                rjson = rresp.json() or []
+                                for rj in rjson:
+                                    rname = rj.get('name')
+                                    if not rname:
+                                        continue
+                                    exists = Regency.query.filter_by(name=rname, province_id=pid_int).first()
+                                    if not exists:
+                                        db.session.add(Regency(name=rname, province_id=pid_int))
+                                db.session.commit()
+            except Exception:
+                db.session.rollback()
+                # silently ignore, UI will show empty list
+
         # apply filters
         if selected_region:
             chats = ChatHistory.query.join(User, ChatHistory.user_id == User.id) \
@@ -524,7 +558,7 @@ def register_routes(app):
     def api_admin_regencies():
         if 'user_id' not in session or session.get('user_role') != 'admin':
             return jsonify({'error': 'Unauthorized'}), 401
-        from .models import Regency
+        from .models import Regency, Province
         try:
             pid = int(request.args.get('province_id', '0'))
         except Exception:
@@ -532,6 +566,37 @@ def register_routes(app):
         if not pid:
             return jsonify({'regencies': []})
         regs = Regency.query.filter_by(province_id=pid).order_by(Regency.name.asc()).all()
+        # Auto-seed regencies for this province if empty
+        if not regs:
+            try:
+                import requests
+                base = 'https://emsifa.github.io/api-wilayah-indonesia/api'
+                prov = Province.query.get(pid)
+                if prov:
+                    resp = requests.get(f'{base}/provinces.json', timeout=20)
+                    resp.raise_for_status()
+                    provinces_json = resp.json() or []
+                    api_pid = None
+                    for pj in provinces_json:
+                        if pj.get('name') == prov.name:
+                            api_pid = pj.get('id')
+                            break
+                    if api_pid:
+                        rresp = requests.get(f'{base}/regencies/{api_pid}.json', timeout=20)
+                        if rresp.status_code == 200:
+                            rjson = rresp.json() or []
+                            for rj in rjson:
+                                rname = rj.get('name')
+                                if not rname:
+                                    continue
+                                exists = Regency.query.filter_by(name=rname, province_id=pid).first()
+                                if not exists:
+                                    db.session.add(Regency(name=rname, province_id=pid))
+                            db.session.commit()
+                            regs = Regency.query.filter_by(province_id=pid).order_by(Regency.name.asc()).all()
+            except Exception:
+                db.session.rollback()
+                regs = []
         return jsonify({'regencies': [{'id': r.id, 'name': r.name} for r in regs]})
 
     # --- Regions master management ---
@@ -566,7 +631,7 @@ def register_routes(app):
     def api_admin_trends():
         if 'user_id' not in session or session.get('user_role') != 'admin':
             return jsonify({'error': 'Unauthorized'}), 401
-        from .models import ChatHistory, User, Regency
+        from .models import ChatHistory, User, Regency, Province
         from datetime import timedelta
         import collections, re
 
@@ -584,6 +649,39 @@ def register_routes(app):
 
         region_filter = request.args.get('region', '').strip()
         province_id = request.args.get('province_id', '').strip()
+
+        # Ensure regencies exist for requested province
+        if province_id:
+            try:
+                pid_int = int(province_id)
+                if Regency.query.filter_by(province_id=pid_int).count() == 0:
+                    import requests
+                    base = 'https://emsifa.github.io/api-wilayah-indonesia/api'
+                    prov = Province.query.get(pid_int)
+                    if prov:
+                        resp = requests.get(f'{base}/provinces.json', timeout=20)
+                        resp.raise_for_status()
+                        provinces_json = resp.json() or []
+                        api_pid = None
+                        for pj in provinces_json:
+                            if pj.get('name') == prov.name:
+                                api_pid = pj.get('id')
+                                break
+                        if api_pid:
+                            rresp = requests.get(f'{base}/regencies/{api_pid}.json', timeout=20)
+                            if rresp.status_code == 200:
+                                rjson = rresp.json() or []
+                                for rj in rjson:
+                                    rname = rj.get('name')
+                                    if not rname:
+                                        continue
+                                    exists = Regency.query.filter_by(name=rname, province_id=pid_int).first()
+                                    if not exists:
+                                        db.session.add(Regency(name=rname, province_id=pid_int))
+                                db.session.commit()
+            except Exception:
+                db.session.rollback()
+                # ignore
 
         now = datetime.utcnow()
         start_time = now - timedelta(days=days)
@@ -688,6 +786,40 @@ def register_routes(app):
 
         if not topic:
             return jsonify({'markers': []})
+
+        # Ensure regencies exist for requested province
+        if province_id:
+            try:
+                from .models import Province, Regency
+                pid_int = int(province_id)
+                if Regency.query.filter_by(province_id=pid_int).count() == 0:
+                    import requests
+                    base = 'https://emsifa.github.io/api-wilayah-indonesia/api'
+                    prov = Province.query.get(pid_int)
+                    if prov:
+                        resp = requests.get(f'{base}/provinces.json', timeout=20)
+                        resp.raise_for_status()
+                        provinces_json = resp.json() or []
+                        api_pid = None
+                        for pj in provinces_json:
+                            if pj.get('name') == prov.name:
+                                api_pid = pj.get('id')
+                                break
+                        if api_pid:
+                            rresp = requests.get(f'{base}/regencies/{api_pid}.json', timeout=20)
+                            if rresp.status_code == 200:
+                                rjson = rresp.json() or []
+                                for rj in rjson:
+                                    rname = rj.get('name')
+                                    if not rname:
+                                        continue
+                                    exists = Regency.query.filter_by(name=rname, province_id=pid_int).first()
+                                    if not exists:
+                                        db.session.add(Regency(name=rname, province_id=pid_int))
+                                db.session.commit()
+            except Exception:
+                db.session.rollback()
+                # ignore
 
         now = datetime.utcnow()
         start_time = now - timedelta(days=days)
