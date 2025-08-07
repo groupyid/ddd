@@ -883,6 +883,66 @@ def register_routes(app):
             markers_map.setdefault(key, 0)
             markers_map[key] += counts_by_user.get(uid, 0)
 
+        # Fallback: if no users have lat/lon, aggregate by region names and geocode centroids
+        if not markers_map and chats:
+            import os, json as _json
+            import requests
+            from time import sleep
+
+            cache_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'cache', 'geocode_cache.json')
+            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+            try:
+                with open(cache_path, 'r', encoding='utf-8') as f:
+                    geo_cache = _json.load(f) or {}
+            except Exception:
+                geo_cache = {}
+
+            def geocode_region(name: str):
+                key = name.strip().upper()
+                if key in geo_cache:
+                    return geo_cache[key]
+                headers = {'User-Agent': 'agri-dashboard/1.0 (contact: admin@example.com)'}
+                q = f"{name}, Indonesia"
+                url = f"https://nominatim.openstreetmap.org/search?q={requests.utils.quote(q)}&format=json&limit=1&countrycodes=id&accept-language=id"
+                try:
+                    r = requests.get(url, headers=headers, timeout=12)
+                    if r.status_code == 200:
+                        arr = r.json() or []
+                        if arr:
+                            lat = float(arr[0]['lat'])
+                            lon = float(arr[0]['lon'])
+                            geo_cache[key] = {'lat': lat, 'lon': lon}
+                            # Persist lazily
+                            try:
+                                with open(cache_path, 'w', encoding='utf-8') as fw:
+                                    _json.dump(geo_cache, fw)
+                            except Exception:
+                                pass
+                            # polite tiny delay
+                            sleep(0.2)
+                            return geo_cache[key]
+                except Exception:
+                    return None
+                return None
+
+            # Aggregate counts per region name
+            region_counts = {}
+            user_map_counts = counts_by_user
+            # Build user_id -> region from DB to ensure accurate region mapping
+            uid_to_region = {u.id: u.region for u in User.query.filter(User.id.in_(list(user_map_counts.keys()))).all()}
+            for uid, cnt in user_map_counts.items():
+                reg_name = (uid_to_region.get(uid) or '').strip()
+                if not reg_name:
+                    continue
+                region_counts[reg_name] = region_counts.get(reg_name, 0) + cnt
+
+            for reg_name, cnt in region_counts.items():
+                loc = geocode_region(reg_name)
+                if not loc:
+                    continue
+                key = (float(loc['lat']), float(loc['lon']), reg_name)
+                markers_map[key] = markers_map.get(key, 0) + cnt
+
         markers = [
             { 'lat': k[0], 'lon': k[1], 'region': k[2], 'count': v }
             for k, v in markers_map.items()
