@@ -38,11 +38,8 @@
                         <h2>Grafik Tren Topik</h2>
                         <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
                             <label for="admin-region" style="font-size:0.95em;color:#555;">Wilayah</label>
-                            <select id="admin-region" style="padding:6px 10px;border-radius:8px;border:1px solid #ddd;min-width:160px;">
+                            <select id="admin-region" style="padding:6px 10px;border-radius:8px;border:1px solid #ddd;min-width:220px;">
                                 <option value="">Semua daerah</option>
-                                {% for r in all_regions %}
-                                <option value="{{ r }}" {% if selected_region == r %}selected{% endif %}>{{ r }}</option>
-                                {% endfor %}
                             </select>
 
                             <label for="trend-period" style="font-size:0.95em;color:#555;">Periode</label>
@@ -126,6 +123,7 @@
     const periodEl = document.getElementById('trend-period');
     const daysEl = document.getElementById('trend-days');
     const regionEl = document.getElementById('admin-region');
+    const preselectedRegion = "{{ selected_region or '' }}";
 
     function randomColor(seed) {
         // simple deterministic color per topic
@@ -133,6 +131,26 @@
         for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) % 360;
         const s = 70, l = 50;
         return `hsl(${h}, ${s}%, ${l}%)`;
+    }
+
+    async function populateRegions() {
+        try {
+            const res = await fetch('/api/admin/regions');
+            const json = await res.json();
+            const regions = json.regions || [];
+            const current = preselectedRegion;
+            // clear old (except first option)
+            for (let i = regionEl.options.length - 1; i >= 1; i--) regionEl.remove(i);
+            regions.forEach(r => {
+                const opt = document.createElement('option');
+                opt.value = r;
+                opt.textContent = r;
+                if (current && current === r) opt.selected = true;
+                regionEl.appendChild(opt);
+            });
+        } catch (e) {
+            // ignore
+        }
     }
 
     async function loadTrendChart() {
@@ -179,7 +197,6 @@
     periodEl.addEventListener('change', loadTrendChart);
     daysEl.addEventListener('change', loadTrendChart);
     regionEl.addEventListener('change', () => {
-        // reload page to apply region filter server-side (for counts and lists)
         const value = regionEl.value;
         const params = new URLSearchParams(window.location.search);
         if (value) params.set('region', value); else params.delete('region');
@@ -238,6 +255,7 @@
 
     // Initialize on load
     window.addEventListener('DOMContentLoaded', async () => {
+        await populateRegions();
         initMap();
         await loadTrendChart();
     });
