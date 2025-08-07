@@ -8,6 +8,67 @@ from datetime import datetime
 from uuid import uuid4
 import json
 
+# ============ Topic Extraction Utilities (phrase-based) ============
+import re as _re
+import collections as _collections
+
+def _normalize_text(text):
+    if not text:
+        return ""
+    return _re.sub(r"\s+", " ", text.lower()).strip()
+
+# Expanded stopwords including 'cara', interrogatives, and common fillers
+STOPWORDS = set([
+    'dan','atau','yang','di','ke','dari','untuk','pada','dengan','apa','bagaimana','adalah','saya','ini','itu',
+    'the','of','in','to','a','is','are','it','as','by','an','be','on','for','was','were','has','have','had','will','can',
+    'petani','chatbot','tolong','mohon','apakah','seperti','agar','yang','jika','bila','dapat','bisa','cara'
+])
+
+# Some phrase starters to avoid as topics
+_AVOID_START = {'cara', 'bagaimana', 'apa', 'tolong', 'mohon'}
+
+_TOKEN_RE = _re.compile(r"\b\w+\b", flags=_re.UNICODE)
+
+def tokenize_words(text):
+    return _TOKEN_RE.findall(_normalize_text(text))
+
+def extract_phrases(text, ngram_sizes=(2,3)):
+    """Extract candidate phrases (bigrams/trigrams) from text, avoiding stopword-only phrases
+    and removing phrases starting/ending with stopwords.
+    """
+    tokens = tokenize_words(text)
+    phrases = []
+    for n in ngram_sizes:
+        if len(tokens) < n:
+            continue
+        for i in range(len(tokens) - n + 1):
+            window = tokens[i:i+n]
+            if window[0] in STOPWORDS or window[-1] in STOPWORDS or window[0] in _AVOID_START:
+                continue
+            # require at least one non-stopword token of length > 2
+            if not any((t not in STOPWORDS and len(t) > 2) for t in window):
+                continue
+            phrase = ' '.join(window)
+            phrases.append(phrase)
+    return phrases
+
+def extract_best_phrase(text, global_phrase_counts=None):
+    """Pick the best phrase from text based on global counts; fallback to the first meaningful word.
+    """
+    candidates = extract_phrases(text)
+    if candidates:
+        if global_phrase_counts:
+            # choose highest frequency phrase present in text
+            candidates_sorted = sorted(candidates, key=lambda p: global_phrase_counts.get(p, 0), reverse=True)
+            if candidates_sorted:
+                return candidates_sorted[0]
+        return candidates[0]
+    # fallback to first meaningful word
+    for w in tokenize_words(text):
+        if w not in STOPWORDS and len(w) > 2 and w not in _AVOID_START:
+            return w
+    return '-'
+
 
 
 def from_json_filter(value):
@@ -90,26 +151,28 @@ def register_routes(app):
         chats = ChatHistory.query.filter(ChatHistory.created_at >= week_ago).all()
 
         jumlah_pertanyaan = len(chats)
-        all_questions = ' '.join([c.question for c in chats]).lower()
-        stopwords = set(['dan','atau','yang','di','ke','dari','untuk','pada','dengan','apa','bagaimana','adalah','saya','ini','itu','the','of','in','to','a','is','are','it','as','by','an','be','on','for','was','were','has','have','had','will','can','petani','chatbot'])
-        keywords = re.findall(r'\b\w+\b', all_questions)
-        keywords = [w for w in keywords if w not in stopwords and len(w) > 2]
-        counter = collections.Counter(keywords)
-        top_topics = counter.most_common(5)
+
+        # Build phrase counts over last week
+        phrase_counter = _collections.Counter()
+        for c in chats:
+            phrase_counter.update(extract_phrases(c.question))
+        # fallback: if no phrases at all, use keywords excluding stopwords
+        if not phrase_counter:
+            all_questions = ' '.join([c.question or '' for c in chats]).lower()
+            keywords = re.findall(r'\b\w+\b', all_questions)
+            keywords = [w for w in keywords if w not in STOPWORDS and len(w) > 2]
+            phrase_counter = _collections.Counter(keywords)
+        top_topics = phrase_counter.most_common(5)
 
         # All region & topic for filter
         all_regions = sorted(set(u.region for u in User.query.filter(User.region != None)))
-        all_topics = sorted(set([t[0] for t in counter.most_common(15)]))
+        all_topics = [t for t, _ in phrase_counter.most_common(15)]
 
         # All chats for table (join user)
         user_map = {u.id: u for u in User.query.all()}
 
         def extract_topik(q):
-            # Ambil kata kunci/topik pertama yang bukan stopword
-            for w in re.findall(r'\b\w+\b', (q or '').lower()):
-                if w not in stopwords and len(w) > 2:
-                    return w
-            return '-'
+            return extract_best_phrase(q, global_phrase_counts=phrase_counter)
 
         all_chats = [
             {
@@ -124,21 +187,20 @@ def register_routes(app):
         ]
 
         # Insight perilaku pengguna
-        import collections as _collections
-        jam_counter = _collections.Counter([c.created_at.hour for c in chats])
+        jam_counter = _collections.Counter([c.created_at.hour for c in chats if c.created_at])
         jam_aktif_tertinggi = f"{jam_counter.most_common(1)[0][0]}:00" if jam_counter else '-'
-        user_counter = _collections.Counter([c.user_id for c in chats])
+        user_counter = _collections.Counter([c.user_id for c in chats if c.user_id])
         rata2_pertanyaan_per_user = f"{(jumlah_pertanyaan/len(user_counter)):.2f}" if user_counter else '-'
         user_paling_aktif = user_map[user_counter.most_common(1)[0][0]].name if user_counter else '-'
 
         # Lokasi untuk peta
-        user_ids = set(c.user_id for c in chats)
+        user_ids = set(c.user_id for c in chats if c.user_id)
         locations = User.query.filter(User.id.in_(user_ids), User.latitude != None, User.longitude != None).with_entities(User.latitude, User.longitude, User.region, User.name).all()
         locations_json = [
             {"lat": float(lat), "lon": float(lon), "region": region, "name": name}
             for lat, lon, region, name in locations
         ]
-        wilayah_aktif = ', '.join(sorted(set(l["region"] for l in locations_json if l["region"]) )) if locations_json else '-'
+        wilayah_aktif = ', '.join(sorted(set(l["region"] for l in locations_json if l["region"])) ) if locations_json else '-'
 
         # Early Warning System (setelah data tersedia)
         ews = []
@@ -290,7 +352,8 @@ def register_routes(app):
             return jsonify({
                 'reply': response_text,
                 'sources': sources,
-                'processing_time': round(processing_time, 2)
+                'processing_time': round(processing_time, 2),
+                'session_id': session_id
             })
         except Exception as e:
             error_id = int(time.time())
@@ -363,13 +426,14 @@ def register_routes(app):
         start_time = now - timedelta(days=days)
         chats = ChatHistory.query.filter(ChatHistory.created_at >= start_time).all()
 
-        stopwords = set(['dan','atau','yang','di','ke','dari','untuk','pada','dengan','apa','bagaimana','adalah','saya','ini','itu','the','of','in','to','a','is','are','it','as','by','an','be','on','for','was','were','has','have','had','will','can','petani','chatbot'])
-
-        def extract_topic(q):
-            for w in re.findall(r'\b\w+\b', (q or '').lower()):
-                if w not in stopwords and len(w) > 2:
-                    return w
-            return '-'
+        # Compute phrase counts across chats and choose a best phrase per chat
+        phrase_counts = _collections.Counter()
+        chat_best_phrase = {}
+        for c in chats:
+            phs = extract_phrases(c.question)
+            phrase_counts.update(phs)
+        for c in chats:
+            chat_best_phrase[c.id] = extract_best_phrase(c.question, global_phrase_counts=phrase_counts)
 
         def bucket_start(dt):
             if period == 'day':
@@ -388,7 +452,7 @@ def register_routes(app):
             if not c.created_at:
                 continue
             bucket = bucket_start(c.created_at)
-            topic = extract_topic(c.question)
+            topic = chat_best_phrase.get(c.id, '-')
             if topic == '-':
                 continue
             totals_by_topic[topic] += 1
@@ -452,13 +516,6 @@ def register_routes(app):
         if not topic:
             return jsonify({'markers': []})
 
-        stopwords = set(['dan','atau','yang','di','ke','dari','untuk','pada','dengan','apa','bagaimana','adalah','saya','ini','itu','the','of','in','to','a','is','are','it','as','by','an','be','on','for','was','were','has','have','had','will','can','petani','chatbot'])
-        def extract_topic(q):
-            for w in re.findall(r'\b\w+\b', (q or '').lower()):
-                if w not in stopwords and len(w) > 2:
-                    return w
-            return '-'
-
         now = datetime.utcnow()
         start_time = now - timedelta(days=days)
         chats = ChatHistory.query.filter(ChatHistory.created_at >= start_time).all()
@@ -467,7 +524,8 @@ def register_routes(app):
         for c in chats:
             if not c.user_id:
                 continue
-            if extract_topic(c.question) == topic:
+            phrases = extract_phrases(c.question)
+            if topic in phrases:
                 counts_by_user[c.user_id] += 1
 
         if not counts_by_user:
@@ -490,6 +548,35 @@ def register_routes(app):
             for k, v in markers_map.items()
         ]
         return jsonify({'markers': markers})
+
+    # --- User location update API ---
+    @app.route('/api/user/location', methods=['POST'])
+    def api_user_location():
+        if 'user_id' not in session:
+            return jsonify({'error': 'Unauthorized'}), 401
+        try:
+            if not request.is_json:
+                return jsonify({'error': 'Invalid payload'}), 400
+            data = request.get_json() or {}
+            lat = data.get('lat')
+            lon = data.get('lon')
+            region = data.get('region')
+            if lat is None or lon is None:
+                return jsonify({'error': 'lat/lon required'}), 400
+            lat = float(lat)
+            lon = float(lon)
+            user = User.query.get(session.get('user_id'))
+            if not user:
+                return jsonify({'error': 'User not found'}), 404
+            user.latitude = lat
+            user.longitude = lon
+            if isinstance(region, str) and region.strip():
+                user.region = region.strip()
+            db.session.commit()
+            return jsonify({'ok': True})
+        except Exception as e:
+            logging.exception('[ERROR] updating user location')
+            return jsonify({'error': 'Failed to update location'}), 500
 
 
     @app.route('/init-db')
