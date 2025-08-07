@@ -40,3 +40,17 @@ class Region(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(150), unique=True, nullable=False)
 
+
+class Province(db.Model):
+    __tablename__ = 'province'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(150), unique=True, nullable=False)
+
+
+class Regency(db.Model):
+    __tablename__ = 'regency'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(150), nullable=False)
+    province_id = db.Column(db.Integer, db.ForeignKey('province.id', ondelete='CASCADE'), nullable=False)
+    province = db.relationship('Province', backref=db.backref('regencies', lazy=True))
+

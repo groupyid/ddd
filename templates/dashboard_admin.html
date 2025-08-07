@@ -37,9 +37,14 @@
                     <div style="flex:1;min-width:320px;max-width:520px;">
                         <h2>Grafik Tren Topik</h2>
                         <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
-                            <label for="admin-region" style="font-size:0.95em;color:#555;">Wilayah</label>
+                            <label for="filter-province" style="font-size:0.95em;color:#555;">Provinsi</label>
+                            <select id="filter-province" style="padding:6px 10px;border-radius:8px;border:1px solid #ddd;min-width:220px;">
+                                <option value="">Semua provinsi</option>
+                            </select>
+
+                            <label for="admin-region" style="font-size:0.95em;color:#555;">Kab/Kota</label>
                             <select id="admin-region" style="padding:6px 10px;border-radius:8px;border:1px solid #ddd;min-width:220px;">
-                                <option value="">Semua daerah</option>
+                                <option value="">Semua kab/kota</option>
                             </select>
 
                             <label for="trend-period" style="font-size:0.95em;color:#555;">Periode</label>
@@ -122,8 +127,10 @@
     let trendChart = null;
     const periodEl = document.getElementById('trend-period');
     const daysEl = document.getElementById('trend-days');
+    const provinceEl = document.getElementById('filter-province');
     const regionEl = document.getElementById('admin-region');
     const preselectedRegion = "{{ selected_region or '' }}";
+    const preselectedProvinceId = "{{ selected_province_id or '' }}";
 
     function randomColor(seed) {
         // simple deterministic color per topic
@@ -133,31 +140,48 @@
         return `hsl(${h}, ${s}%, ${l}%)`;
     }
 
-    async function populateRegions() {
+    async function populateProvinces() {
         try {
-            const res = await fetch('/api/admin/regions');
+            const res = await fetch('/api/admin/provinces');
             const json = await res.json();
-            const regions = json.regions || [];
-            const current = preselectedRegion;
+            const provinces = json.provinces || [];
             // clear old (except first option)
-            for (let i = regionEl.options.length - 1; i >= 1; i--) regionEl.remove(i);
-            regions.forEach(r => {
+            for (let i = provinceEl.options.length - 1; i >= 1; i--) provinceEl.remove(i);
+            provinces.forEach(p => {
                 const opt = document.createElement('option');
-                opt.value = r;
-                opt.textContent = r;
-                if (current && current === r) opt.selected = true;
+                opt.value = String(p.id);
+                opt.textContent = p.name;
+                if (preselectedProvinceId && String(p.id) === String(preselectedProvinceId)) opt.selected = true;
+                provinceEl.appendChild(opt);
+            });
+        } catch (e) {}
+    }
+
+    async function populateRegencies(provinceId) {
+        // clear regencies first
+        for (let i = regionEl.options.length - 1; i >= 1; i--) regionEl.remove(i);
+        if (!provinceId) return;
+        try {
+            const res = await fetch(`/api/admin/regencies?province_id=${encodeURIComponent(provinceId)}`);
+            const json = await res.json();
+            const regs = json.regencies || [];
+            regs.forEach(r => {
+                const opt = document.createElement('option');
+                opt.value = r.name;
+                opt.textContent = r.name;
+                if (preselectedRegion && preselectedRegion === r.name) opt.selected = true;
                 regionEl.appendChild(opt);
             });
-        } catch (e) {
-            // ignore
-        }
+        } catch (e) {}
     }
 
     async function loadTrendChart() {
         const period = periodEl.value;
         const days = daysEl.value;
         const region = regionEl.value;
-        const res = await fetch(`/api/admin/trends?period=${encodeURIComponent(period)}&days=${encodeURIComponent(days)}&region=${encodeURIComponent(region)}`);
+        const provinceId = provinceEl.value;
+        const params = new URLSearchParams({ period, days, region, province_id: provinceId });
+        const res = await fetch(`/api/admin/trends?${params.toString()}`);
         const data = await res.json();
         const labels = data.labels || [];
         const topics = data.topics || [];
@@ -196,10 +220,27 @@
 
     periodEl.addEventListener('change', loadTrendChart);
     daysEl.addEventListener('change', loadTrendChart);
+
+    provinceEl.addEventListener('change', async () => {
+        const pid = provinceEl.value;
+        await populateRegencies(pid);
+        // Reset region if province changed
+        regionEl.value = '';
+        // Apply server-side filters via URL reload
+        const params = new URLSearchParams(window.location.search);
+        if (pid) params.set('province_id', pid); else params.delete('province_id');
+        params.delete('region');
+        const base = window.location.pathname;
+        window.location.replace(`${base}?${params.toString()}`);
+    });
+
     regionEl.addEventListener('change', () => {
         const value = regionEl.value;
         const params = new URLSearchParams(window.location.search);
         if (value) params.set('region', value); else params.delete('region');
+        // keep current province in URL for persistence
+        const pid = provinceEl.value;
+        if (pid) params.set('province_id', pid); else params.delete('province_id');
         const base = window.location.pathname;
         window.location.replace(`${base}?${params.toString()}`);
     });
@@ -228,7 +269,9 @@
         bubbleLayer.clearLayers();
         if (!topic) return;
         const region = regionEl.value;
-        const res = await fetch(`/api/admin/topic-distribution?topic=${encodeURIComponent(topic)}&days=${encodeURIComponent(days)}&region=${encodeURIComponent(region)}`);
+        const provinceId = provinceEl.value;
+        const params = new URLSearchParams({ topic, days, region, province_id: provinceId });
+        const res = await fetch(`/api/admin/topic-distribution?${params.toString()}`);
         const json = await res.json();
         const markers = json.markers || [];
         if (markers.length === 0) return;
@@ -255,7 +298,11 @@
 
     // Initialize on load
     window.addEventListener('DOMContentLoaded', async () => {
-        await populateRegions();
+        await populateProvinces();
+        const pid = preselectedProvinceId;
+        if (pid) {
+            await populateRegencies(pid);
+        }
         initMap();
         await loadTrendChart();
     });
