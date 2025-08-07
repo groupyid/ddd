@@ -41,6 +41,8 @@
                             <select id="filter-province" style="padding:6px 10px;border-radius:8px;border:1px solid #ddd;min-width:220px;">
                                 <option value="">Semua provinsi</option>
                             </select>
+                            <button id="seed-regions-btn" style="padding:6px 10px;border-radius:8px;border:1px solid #ddd;background:#f8f9fa;cursor:pointer;">Muat daftar Indonesia</button>
+                            <span id="seed-status" style="font-size:0.9em;color:#888;"></span>
 
                             <label for="admin-region" style="font-size:0.95em;color:#555;">Kab/Kota</label>
                             <select id="admin-region" style="padding:6px 10px;border-radius:8px;border:1px solid #ddd;min-width:220px;">
@@ -129,8 +131,15 @@
     const daysEl = document.getElementById('trend-days');
     const provinceEl = document.getElementById('filter-province');
     const regionEl = document.getElementById('admin-region');
+    const seedBtn = document.getElementById('seed-regions-btn');
+    const seedStatus = document.getElementById('seed-status');
     const preselectedRegion = "{{ selected_region or '' }}";
     const preselectedProvinceId = "{{ selected_province_id or '' }}";
+
+    function setSeedStatus(msg, ok=true) {
+        seedStatus.textContent = msg || '';
+        seedStatus.style.color = ok ? '#2e7d32' : '#c62828';
+    }
 
     function randomColor(seed) {
         // simple deterministic color per topic
@@ -145,7 +154,6 @@
             const res = await fetch('/api/admin/provinces');
             const json = await res.json();
             const provinces = json.provinces || [];
-            // clear old (except first option)
             for (let i = provinceEl.options.length - 1; i >= 1; i--) provinceEl.remove(i);
             provinces.forEach(p => {
                 const opt = document.createElement('option');
@@ -154,11 +162,26 @@
                 if (preselectedProvinceId && String(p.id) === String(preselectedProvinceId)) opt.selected = true;
                 provinceEl.appendChild(opt);
             });
-        } catch (e) {}
+            if (provinces.length === 0) {
+                // auto seed once
+                await seedIndonesiaRegions();
+                const res2 = await fetch('/api/admin/provinces');
+                const json2 = await res2.json();
+                const provinces2 = json2.provinces || [];
+                for (let i = provinceEl.options.length - 1; i >= 1; i--) provinceEl.remove(i);
+                provinces2.forEach(p => {
+                    const opt = document.createElement('option');
+                    opt.value = String(p.id);
+                    opt.textContent = p.name;
+                    provinceEl.appendChild(opt);
+                });
+            }
+        } catch (e) {
+            setSeedStatus('Gagal memuat provinsi', false);
+        }
     }
 
     async function populateRegencies(provinceId) {
-        // clear regencies first
         for (let i = regionEl.options.length - 1; i >= 1; i--) regionEl.remove(i);
         if (!provinceId) return;
         try {
@@ -172,7 +195,23 @@
                 if (preselectedRegion && preselectedRegion === r.name) opt.selected = true;
                 regionEl.appendChild(opt);
             });
-        } catch (e) {}
+        } catch (e) {
+            setSeedStatus('Gagal memuat kab/kota', false);
+        }
+    }
+
+    async function seedIndonesiaRegions() {
+        try {
+            setSeedStatus('Memuat daftar Indonesia...', true);
+            seedBtn.disabled = true;
+            const res = await fetch('/api/admin/seed-indonesia-regions', { method: 'POST' });
+            const ok = res.ok;
+            setSeedStatus(ok ? 'Daftar wilayah terpasang' : 'Gagal memasang daftar', ok);
+        } catch (e) {
+            setSeedStatus('Gagal memasang daftar', false);
+        } finally {
+            seedBtn.disabled = false;
+        }
     }
 
     async function loadTrendChart() {
@@ -224,9 +263,7 @@
     provinceEl.addEventListener('change', async () => {
         const pid = provinceEl.value;
         await populateRegencies(pid);
-        // Reset region if province changed
         regionEl.value = '';
-        // Apply server-side filters via URL reload
         const params = new URLSearchParams(window.location.search);
         if (pid) params.set('province_id', pid); else params.delete('province_id');
         params.delete('region');
@@ -238,11 +275,17 @@
         const value = regionEl.value;
         const params = new URLSearchParams(window.location.search);
         if (value) params.set('region', value); else params.delete('region');
-        // keep current province in URL for persistence
         const pid = provinceEl.value;
         if (pid) params.set('province_id', pid); else params.delete('province_id');
         const base = window.location.pathname;
         window.location.replace(`${base}?${params.toString()}`);
+    });
+
+    seedBtn.addEventListener('click', async () => {
+        await seedIndonesiaRegions();
+        await populateProvinces();
+        const pid = provinceEl.value || preselectedProvinceId;
+        if (pid) await populateRegencies(pid);
     });
 
     // ============ Peta: Distribusi Topik ==========
