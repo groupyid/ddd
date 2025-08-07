@@ -63,17 +63,34 @@
                         <div style="background:#f7fafc;border-radius:12px;padding:12px;">
                             <canvas id="trendChart" height="200"></canvas>
                         </div>
-                        <div id="tren-topik" style="margin-top:12px;">
-                            {% if top_topics %}
-                            <ol style="padding-left:20px;">
-                                {% for topic, count in top_topics %}
-                                <li><b>{{ topic }}</b>: {{ count }} pertanyaan</li>
-                                {% endfor %}
-                            </ol>
-                            {% else %}
-                            <p>Belum ada data tren topik minggu ini.</p>
-                            {% endif %}
-                        </div>
+                                                 <div id="tren-topik" style="margin-top:12px;">
+                             {% if top_topics %}
+                             <ol style="padding-left:20px;">
+                                 {% for topic, count in top_topics %}
+                                 <li><b>{{ topic }}</b>: {{ count }} pertanyaan</li>
+                                 {% endfor %}
+                             </ol>
+                             {% else %}
+                             <p>Belum ada data tren topik minggu ini.</p>
+                             {% endif %}
+                         </div>
+                         <script>
+                         // Update "Jumlah pertanyaan" insight live from chart data
+                         async function refreshInsightCount() {
+                             try {
+                                 const period = document.getElementById('trend-period').value;
+                                 const days = document.getElementById('trend-days').value;
+                                 const region = document.getElementById('admin-region').value;
+                                 const provinceId = document.getElementById('filter-province').value;
+                                 const params = new URLSearchParams({ period, days, region, province_id: provinceId });
+                                 const res = await fetch(`/api/admin/trends?${params.toString()}`);
+                                 const data = await res.json();
+                                 const total = (data.matrix || []).reduce((sum, row) => sum + row.reduce((a,b)=>a+b,0), 0);
+                                 const el = document.querySelector('#statistik-pengguna li');
+                                 if (el) el.innerHTML = `Jumlah pertanyaan minggu ini: <b>${total}</b>`;
+                             } catch (e) { /* silent */ }
+                         }
+                         </script>
                         <h2 style="margin-top:20px;">Insight Statistik</h2>
                         <div id="statistik-pengguna">
                             <ul>
@@ -182,48 +199,54 @@
         }
     }
 
-    async function loadTrendChart() {
-        const period = periodEl.value;
-        const days = daysEl.value;
-        const region = regionEl.value;
-        const provinceId = provinceEl.value;
-        const params = new URLSearchParams({ period, days, region, province_id: provinceId });
-        const res = await fetch(`/api/admin/trends?${params.toString()}`);
-        const data = await res.json();
-        const labels = data.labels || [];
-        const topics = data.topics || [];
-        const matrix = data.matrix || [];
-
-        const datasets = topics.map((t, idx) => {
-            const color = randomColor(t + idx);
-            return {
-                label: t,
-                data: matrix[idx] || [],
-                borderColor: color,
-                backgroundColor: color.replace('hsl', 'hsla').replace('%)', '%, 0.15)'),
-                tension: 0.2,
-                fill: true
-            };
-        });
-
-        if (trendChart) trendChart.destroy();
-        trendChart = new Chart(trendCtx, {
-            type: 'line',
-            data: { labels, datasets },
-            options: {
-                responsive: true,
-                plugins: {
-                    legend: { position: 'bottom' },
-                    tooltip: { mode: 'index', intersect: false }
-                },
-                interaction: { mode: 'nearest', axis: 'x', intersect: false },
-                scales: {
-                    x: { title: { display: true, text: 'Tanggal' } },
-                    y: { title: { display: true, text: 'Jumlah pertanyaan' }, beginAtZero: true, ticks: { precision: 0 } }
-                }
-            }
-        });
-    }
+         async function loadTrendChart() {
+         const period = periodEl.value;
+         const days = daysEl.value;
+         const region = regionEl.value;
+         const provinceId = provinceEl.value;
+         const params = new URLSearchParams({ period, days, region, province_id: provinceId });
+         const res = await fetch(`/api/admin/trends?${params.toString()}`);
+         const data = await res.json();
+         const labels = data.labels || [];
+         const topics = data.topics || [];
+         const matrix = data.matrix || [];
+ 
+         const datasets = topics.map((t, idx) => {
+             const color = randomColor(t + idx);
+             return {
+                 label: t,
+                 data: matrix[idx] || [],
+                 borderColor: color,
+                 backgroundColor: color.replace('hsl', 'hsla').replace('%)', '%, 0.15)'),
+                 tension: 0.2,
+                 fill: true
+             };
+         });
+ 
+         if (trendChart) trendChart.destroy();
+         trendChart = new Chart(trendCtx, {
+             type: 'line',
+             data: { labels, datasets },
+             options: {
+                 responsive: true,
+                 plugins: {
+                     legend: { position: 'bottom' },
+                     tooltip: { mode: 'index', intersect: false }
+                 },
+                 interaction: { mode: 'nearest', axis: 'x', intersect: false },
+                 scales: {
+                     x: { title: { display: true, text: 'Tanggal' } },
+                     y: { title: { display: true, text: 'Jumlah pertanyaan' }, beginAtZero: true, ticks: { precision: 0 } }
+                 }
+             }
+         });
+ 
+         // Auto-pick first topic for map bubbles when none selected
+         if (!topicEl.value && topics.length > 0) {
+             topicEl.value = topics[0];
+         }
+         await refreshInsightCount();
+     }
 
     periodEl.addEventListener('change', async () => {
         await loadTrendChart();
@@ -243,6 +266,7 @@
         history.replaceState(null, '', `${base}?${params.toString()}`);
         await loadTrendChart();
         await renderTopicBubbles(topicEl.value, mapDaysEl.value);
+        await refreshInsightCount();
     });
 
     regionEl.addEventListener('change', async () => {
@@ -255,6 +279,7 @@
         history.replaceState(null, '', `${base}?${params.toString()}`);
         await loadTrendChart();
         await renderTopicBubbles(topicEl.value, mapDaysEl.value);
+        await refreshInsightCount();
     });
 
     // ============ Peta: Distribusi Topik ==========
