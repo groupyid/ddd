@@ -237,6 +237,9 @@ def register_routes(app):
             phrase_counter = _collections.Counter(keywords)
         top_topics = phrase_counter.most_common(5)
 
+        # All chats for table (join user) - moved up before usage
+        user_map = {u.id: u for u in User.query.all()}
+
         # Generate topic breakdown by region
         topic_by_region = {}
         for c in chats:
@@ -258,9 +261,6 @@ def register_routes(app):
         master_regions = [r.name for r in Region.query.order_by(Region.name.asc()).all()]
         all_regions = sorted(set([r for r in user_regions if r] + master_regions))
         all_topics = [t for t, _ in phrase_counter.most_common(15)]
-
-        # All chats for table (join user)
-        user_map = {u.id: u for u in User.query.all()}
 
         def extract_topik(q):
             return extract_best_phrase(q, global_phrase_counts=phrase_counter)
