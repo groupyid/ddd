@@ -689,9 +689,21 @@ def register_routes(app):
             chats = ChatHistory.query.join(User, ChatHistory.user_id == User.id) \
                 .filter(ChatHistory.created_at >= start_time, User.region == region_filter).all()
         elif province_id:
-            chats = ChatHistory.query.join(User, ChatHistory.user_id == User.id) \
-                .join(Regency, Regency.name == User.region) \
-                .filter(ChatHistory.created_at >= start_time, Regency.province_id == int(province_id)).all()
+            # Get all regency names for the selected province
+            try:
+                pid_int = int(province_id)
+                regency_names = [r.name for r in Regency.query.filter_by(province_id=pid_int).all()]
+                
+                if regency_names:
+                    # Filter users by regency names belonging to the province
+                    chats = ChatHistory.query.join(User, ChatHistory.user_id == User.id) \
+                        .filter(ChatHistory.created_at >= start_time, User.region.in_(regency_names)).all()
+                else:
+                    # If no regencies found, return empty result
+                    chats = []
+            except ValueError:
+                # Invalid province_id, return empty result
+                chats = []
         else:
             chats = ChatHistory.query.filter(ChatHistory.created_at >= start_time).all()
 
@@ -839,10 +851,22 @@ def register_routes(app):
             chats = ChatHistory.query.join(User, ChatHistory.user_id == User.id) \
                 .filter(ChatHistory.created_at >= start_time, User.region == region_filter).all()
         elif province_id:
-            from .models import Regency
-            chats = ChatHistory.query.join(User, ChatHistory.user_id == User.id) \
-                .join(Regency, Regency.name == User.region) \
-                .filter(ChatHistory.created_at >= start_time, Regency.province_id == int(province_id)).all()
+            # Get all regency names for the selected province
+            try:
+                from .models import Regency
+                pid_int = int(province_id)
+                regency_names = [r.name for r in Regency.query.filter_by(province_id=pid_int).all()]
+                
+                if regency_names:
+                    # Filter users by regency names belonging to the province
+                    chats = ChatHistory.query.join(User, ChatHistory.user_id == User.id) \
+                        .filter(ChatHistory.created_at >= start_time, User.region.in_(regency_names)).all()
+                else:
+                    # If no regencies found, return empty result
+                    chats = []
+            except ValueError:
+                # Invalid province_id, return empty result
+                chats = []
         else:
             chats = ChatHistory.query.filter(ChatHistory.created_at >= start_time).all()
 

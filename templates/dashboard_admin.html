@@ -200,16 +200,34 @@
     }
 
          async function loadTrendChart() {
-         const period = periodEl.value;
-         const days = daysEl.value;
-         const region = regionEl.value;
-         const provinceId = provinceEl.value;
-         const params = new URLSearchParams({ period, days, region, province_id: provinceId });
-         const res = await fetch(`/api/admin/trends?${params.toString()}`);
-         const data = await res.json();
-         const labels = data.labels || [];
-         const topics = data.topics || [];
-         const matrix = data.matrix || [];
+         try {
+             const period = periodEl.value;
+             const days = daysEl.value;
+             const region = regionEl.value;
+             const provinceId = provinceEl.value;
+             const params = new URLSearchParams({ period, days, region, province_id: provinceId });
+             
+             console.log('Loading trend chart with params:', params.toString());
+             const res = await fetch(`/api/admin/trends?${params.toString()}`);
+             
+             if (!res.ok) {
+                 throw new Error(`HTTP error! status: ${res.status}`);
+             }
+             
+             const data = await res.json();
+             console.log('Trend chart data received:', data);
+             
+             if (data.error) {
+                 throw new Error(data.error);
+             }
+             
+             const labels = data.labels || [];
+             const topics = data.topics || [];
+             const matrix = data.matrix || [];
+             
+             if (labels.length === 0 && topics.length === 0) {
+                 console.log('No data available for selected filters');
+             }
  
          const datasets = topics.map((t, idx) => {
              const color = randomColor(t + idx);
@@ -246,6 +264,31 @@
              topicEl.value = topics[0];
          }
          await refreshInsightCount();
+         } catch (error) {
+             console.error('Error loading trend chart:', error);
+             
+             // Clear existing chart if there's an error
+             if (trendChart) trendChart.destroy();
+             
+             // Show empty chart or error message
+             const emptyDatasets = [];
+             trendChart = new Chart(trendCtx, {
+                 type: 'line',
+                 data: { labels: [], datasets: emptyDatasets },
+                 options: {
+                     responsive: true,
+                     plugins: {
+                         legend: { position: 'bottom' },
+                         tooltip: { mode: 'index', intersect: false }
+                     },
+                     interaction: { mode: 'nearest', axis: 'x', intersect: false },
+                     scales: {
+                         x: { title: { display: true, text: 'Tanggal' } },
+                         y: { title: { display: true, text: 'Jumlah pertanyaan' }, beginAtZero: true, ticks: { precision: 0 } }
+                     }
+                 }
+             });
+         }
      }
 
     periodEl.addEventListener('change', async () => {
