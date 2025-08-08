@@ -251,11 +251,11 @@ def register_routes(app):
         rata2_pertanyaan_per_user = f"{(jumlah_pertanyaan/len(user_counter)):.2f}" if user_counter else '-'
 
         # Wilayah aktif (tanpa koordinat atau username)
-        regions_in_chats = sorted(set(
-            (user_map[c.user_id].region if (c.user_id in user_map and user_map[c.user_id].region) else None)
-            for c in chats
-        ))
-        regions_in_chats = [r for r in regions_in_chats if r]
+        regions_set = set()
+        for c in chats:
+            if c.user_id in user_map and user_map[c.user_id].region:
+                regions_set.add(user_map[c.user_id].region)
+        regions_in_chats = sorted(regions_set)
         wilayah_aktif = ', '.join(regions_in_chats) if regions_in_chats else '-'
 
         # Early Warning System (setelah data tersedia)
