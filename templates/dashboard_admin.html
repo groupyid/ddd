@@ -101,20 +101,88 @@
                         
                         {% if topic_by_region %}
                         <h3 style="margin-top:24px;color:#2e7d32;">Tren Topik per Daerah</h3>
-                        <div style="background:#f7fafc;border-radius:8px;padding:16px;max-height:300px;overflow-y:auto;">
-                            {% for region, topics in topic_by_region.items() %}
-                            <div style="margin-bottom:16px;padding:12px;background:#fff;border-radius:6px;border-left:4px solid #2e7d32;">
-                                <h4 style="margin:0 0 8px 0;color:#1b5e20;">{{ region }}</h4>
-                                <ul style="margin:0;padding-left:20px;font-size:0.9em;">
-                                    {% for topic, count in topics.most_common(5) %}
-                                    <li style="margin-bottom:4px;">
-                                        <b>{{ topic }}</b>: {{ count }} pertanyaan
-                                    </li>
-                                    {% endfor %}
-                                </ul>
-                            </div>
-                            {% endfor %}
+                        <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;">
+                            <label for="regional-filter" style="font-size:0.95em;color:#555;">Filter Daerah:</label>
+                            <select id="regional-filter" style="padding:6px 10px;border-radius:8px;border:1px solid #ddd;min-width:200px;">
+                                <option value="">Nasional (Semua Daerah)</option>
+                                {% for region in topic_by_region.keys() %}
+                                <option value="{{ region }}">{{ region }}</option>
+                                {% endfor %}
+                            </select>
                         </div>
+                        <div id="regional-topics-container" style="background:#f7fafc;border-radius:8px;padding:16px;max-height:300px;overflow-y:auto;">
+                            <!-- All regions (default view) -->
+                            <div id="all-regions-view">
+                                {% for region, topics in topic_by_region.items() %}
+                                <div class="region-card" data-region="{{ region }}" style="margin-bottom:16px;padding:12px;background:#fff;border-radius:6px;border-left:4px solid #2e7d32;">
+                                    <h4 style="margin:0 0 8px 0;color:#1b5e20;">{{ region }}</h4>
+                                    <ul style="margin:0;padding-left:20px;font-size:0.9em;">
+                                        {% for topic, count in topics.most_common(5) %}
+                                        <li style="margin-bottom:4px;">
+                                            <b>{{ topic }}</b>: {{ count }} pertanyaan
+                                        </li>
+                                        {% endfor %}
+                                    </ul>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            
+                            <!-- Single region view (hidden by default) -->
+                            <div id="single-region-view" style="display:none;">
+                                {% for region, topics in topic_by_region.items() %}
+                                <div class="single-region-data" data-region="{{ region }}" style="display:none;">
+                                    <h4 style="margin:0 0 12px 0;color:#1b5e20;font-size:1.1em;">📍 {{ region }}</h4>
+                                    {% if topics %}
+                                    <div style="background:#fff;border-radius:6px;padding:16px;">
+                                        <h5 style="margin:0 0 8px 0;color:#2e7d32;">Topik Terpopuler:</h5>
+                                        <ol style="margin:0;padding-left:20px;">
+                                            {% for topic, count in topics.most_common(10) %}
+                                            <li style="margin-bottom:6px;font-size:0.95em;">
+                                                <b>{{ topic }}</b>: {{ count }} pertanyaan
+                                            </li>
+                                            {% endfor %}
+                                        </ol>
+                                    </div>
+                                    {% else %}
+                                    <div style="background:#fff;border-radius:6px;padding:16px;text-align:center;color:#666;">
+                                        <i>Tidak ada data topik untuk daerah ini</i>
+                                    </div>
+                                    {% endif %}
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        
+                        <script>
+                        // Regional filter functionality
+                        document.getElementById('regional-filter').addEventListener('change', function() {
+                            const selectedRegion = this.value;
+                            const allRegionsView = document.getElementById('all-regions-view');
+                            const singleRegionView = document.getElementById('single-region-view');
+                            const singleRegionCards = document.querySelectorAll('.single-region-data');
+                            
+                            if (selectedRegion === '') {
+                                // Show all regions (national view)
+                                allRegionsView.style.display = 'block';
+                                singleRegionView.style.display = 'none';
+                            } else {
+                                // Show single region
+                                allRegionsView.style.display = 'none';
+                                singleRegionView.style.display = 'block';
+                                
+                                // Hide all single region cards
+                                singleRegionCards.forEach(card => {
+                                    card.style.display = 'none';
+                                });
+                                
+                                // Show selected region card
+                                const selectedCard = document.querySelector(`.single-region-data[data-region="${selectedRegion}"]`);
+                                if (selectedCard) {
+                                    selectedCard.style.display = 'block';
+                                }
+                            }
+                        });
+                        </script>
                         {% endif %}
                     </div>
                     <div style="flex:1;min-width:320px;max-width:520px;">
