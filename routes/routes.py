@@ -694,16 +694,49 @@ def register_routes(app):
                 pid_int = int(province_id)
                 regency_names = [r.name for r in Regency.query.filter_by(province_id=pid_int).all()]
                 
+                # Debug logging
+                print(f"DEBUG: province_id={province_id}, regency_names count={len(regency_names)}")
                 if regency_names:
-                    # Filter users by regency names belonging to the province
+                    print(f"DEBUG: First 5 regency names: {regency_names[:5]}")
+                
+                if regency_names:
+                    # Strategy 1: Exact match with regency names
                     chats = ChatHistory.query.join(User, ChatHistory.user_id == User.id) \
                         .filter(ChatHistory.created_at >= start_time, User.region.in_(regency_names)).all()
+                    print(f"DEBUG: Found {len(chats)} chats with exact regency match")
+                    
+                    # Strategy 2: If no exact match, try fuzzy matching with province name
+                    if len(chats) == 0:
+                        province = Province.query.get(pid_int)
+                        if province:
+                            province_name = province.name.lower()
+                            # Find users whose region contains province name (fuzzy match)
+                            fuzzy_chats = ChatHistory.query.join(User, ChatHistory.user_id == User.id) \
+                                .filter(ChatHistory.created_at >= start_time) \
+                                .filter(db.func.lower(User.region).contains(province_name)).all()
+                            chats = fuzzy_chats
+                            print(f"DEBUG: Fuzzy match found {len(chats)} chats for province '{province_name}'")
                 else:
-                    # If no regencies found, return empty result
-                    chats = []
+                    # If no regencies found, try fallback with province name directly
+                    province = Province.query.get(pid_int)
+                    if province:
+                        province_name = province.name.lower()
+                        # Try to find users with region containing province name
+                        chats = ChatHistory.query.join(User, ChatHistory.user_id == User.id) \
+                            .filter(ChatHistory.created_at >= start_time) \
+                            .filter(db.func.lower(User.region).contains(province_name)).all()
+                        print(f"DEBUG: Fallback strategy found {len(chats)} chats for province '{province_name}'")
+                    else:
+                        chats = []
+                        print(f"DEBUG: No regencies and no province found for ID {province_id}")
             except ValueError:
                 # Invalid province_id, return empty result
                 chats = []
+                print(f"DEBUG: Invalid province_id: {province_id}")
+            except Exception as e:
+                # Handle any other database errors
+                chats = []
+                print(f"DEBUG: Database error for province_id {province_id}: {str(e)}")
         else:
             chats = ChatHistory.query.filter(ChatHistory.created_at >= start_time).all()
 
@@ -857,16 +890,49 @@ def register_routes(app):
                 pid_int = int(province_id)
                 regency_names = [r.name for r in Regency.query.filter_by(province_id=pid_int).all()]
                 
+                # Debug logging
+                print(f"DEBUG topic-distribution: province_id={province_id}, regency_names count={len(regency_names)}")
                 if regency_names:
-                    # Filter users by regency names belonging to the province
+                    print(f"DEBUG topic-distribution: First 5 regency names: {regency_names[:5]}")
+                
+                if regency_names:
+                    # Strategy 1: Exact match with regency names
                     chats = ChatHistory.query.join(User, ChatHistory.user_id == User.id) \
                         .filter(ChatHistory.created_at >= start_time, User.region.in_(regency_names)).all()
+                    print(f"DEBUG topic-distribution: Found {len(chats)} chats with exact regency match")
+                    
+                    # Strategy 2: If no exact match, try fuzzy matching with province name
+                    if len(chats) == 0:
+                        province = Province.query.get(pid_int)
+                        if province:
+                            province_name = province.name.lower()
+                            # Find users whose region contains province name (fuzzy match)
+                            fuzzy_chats = ChatHistory.query.join(User, ChatHistory.user_id == User.id) \
+                                .filter(ChatHistory.created_at >= start_time) \
+                                .filter(db.func.lower(User.region).contains(province_name)).all()
+                            chats = fuzzy_chats
+                            print(f"DEBUG topic-distribution: Fuzzy match found {len(chats)} chats for province '{province_name}'")
                 else:
-                    # If no regencies found, return empty result
-                    chats = []
+                    # If no regencies found, try fallback with province name directly
+                    province = Province.query.get(pid_int)
+                    if province:
+                        province_name = province.name.lower()
+                        # Try to find users with region containing province name
+                        chats = ChatHistory.query.join(User, ChatHistory.user_id == User.id) \
+                            .filter(ChatHistory.created_at >= start_time) \
+                            .filter(db.func.lower(User.region).contains(province_name)).all()
+                        print(f"DEBUG topic-distribution: Fallback strategy found {len(chats)} chats for province '{province_name}'")
+                    else:
+                        chats = []
+                        print(f"DEBUG topic-distribution: No regencies and no province found for ID {province_id}")
             except ValueError:
                 # Invalid province_id, return empty result
                 chats = []
+                print(f"DEBUG topic-distribution: Invalid province_id: {province_id}")
+            except Exception as e:
+                # Handle any other database errors
+                chats = []
+                print(f"DEBUG topic-distribution: Database error for province_id {province_id}: {str(e)}")
         else:
             chats = ChatHistory.query.filter(ChatHistory.created_at >= start_time).all()
 

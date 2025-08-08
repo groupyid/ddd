@@ -225,10 +225,10 @@
              const topics = data.topics || [];
              const matrix = data.matrix || [];
              
-             if (labels.length === 0 && topics.length === 0) {
+                          if (labels.length === 0 && topics.length === 0) {
                  console.log('No data available for selected filters');
              }
- 
+
          const datasets = topics.map((t, idx) => {
              const color = randomColor(t + idx);
              return {
@@ -240,24 +240,60 @@
                  fill: true
              };
          });
- 
+
          if (trendChart) trendChart.destroy();
-         trendChart = new Chart(trendCtx, {
-             type: 'line',
-             data: { labels, datasets },
-             options: {
-                 responsive: true,
-                 plugins: {
-                     legend: { position: 'bottom' },
-                     tooltip: { mode: 'index', intersect: false }
-                 },
-                 interaction: { mode: 'nearest', axis: 'x', intersect: false },
-                 scales: {
-                     x: { title: { display: true, text: 'Tanggal' } },
-                     y: { title: { display: true, text: 'Jumlah pertanyaan' }, beginAtZero: true, ticks: { precision: 0 } }
+         
+         // Special handling for empty data
+         if (labels.length === 0 || topics.length === 0) {
+             // Show empty chart with message
+             const provinceName = provinceEl.options[provinceEl.selectedIndex]?.text || 'provinsi yang dipilih';
+             const emptyDataset = [{
+                 label: `Tidak ada data untuk ${provinceName}`,
+                 data: [],
+                 borderColor: '#ccc',
+                 backgroundColor: 'rgba(204, 204, 204, 0.1)',
+                 tension: 0.2,
+                 fill: false
+             }];
+             
+             trendChart = new Chart(trendCtx, {
+                 type: 'line',
+                 data: { labels: ['Tidak ada data'], datasets: emptyDataset },
+                 options: {
+                     responsive: true,
+                     plugins: {
+                         legend: { position: 'bottom' },
+                         tooltip: { 
+                             callbacks: {
+                                 label: () => `Tidak ada data chat untuk ${provinceName}`
+                             }
+                         }
+                     },
+                     scales: {
+                         x: { title: { display: true, text: 'Tanggal' } },
+                         y: { title: { display: true, text: 'Jumlah pertanyaan' }, beginAtZero: true, ticks: { precision: 0 } }
+                     }
                  }
-             }
-         });
+             });
+         } else {
+             // Normal chart with data
+             trendChart = new Chart(trendCtx, {
+                 type: 'line',
+                 data: { labels, datasets },
+                 options: {
+                     responsive: true,
+                     plugins: {
+                         legend: { position: 'bottom' },
+                         tooltip: { mode: 'index', intersect: false }
+                     },
+                     interaction: { mode: 'nearest', axis: 'x', intersect: false },
+                     scales: {
+                         x: { title: { display: true, text: 'Tanggal' } },
+                         y: { title: { display: true, text: 'Jumlah pertanyaan' }, beginAtZero: true, ticks: { precision: 0 } }
+                     }
+                 }
+             });
+         }
  
          // Auto-pick first topic for map bubbles when none selected
          if (!topicEl.value && topics.length > 0) {
