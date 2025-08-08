@@ -111,20 +111,22 @@
                             </select>
                         </div>
                         <div id="regional-topics-container" style="background:#f7fafc;border-radius:8px;padding:16px;max-height:300px;overflow-y:auto;">
-                            <!-- All regions (default view) -->
-                            <div id="all-regions-view">
-                                {% for region, topics in topic_by_region.items() %}
-                                <div class="region-card" data-region="{{ region }}" style="margin-bottom:16px;padding:12px;background:#fff;border-radius:6px;border-left:4px solid #2e7d32;">
-                                    <h4 style="margin:0 0 8px 0;color:#1b5e20;">{{ region }}</h4>
-                                    <ul style="margin:0;padding-left:20px;font-size:0.9em;">
-                                        {% for topic, count in topics.most_common(5) %}
-                                        <li style="margin-bottom:4px;">
+                            <!-- National view (default) - shows Indonesia overall trends -->
+                            <div id="national-view">
+                                <h4 style="margin:0 0 12px 0;color:#1b5e20;font-size:1.1em;">🇮🇩 Tren Topik Nasional Indonesia</h4>
+                                <div style="background:#fff;border-radius:6px;padding:16px;">
+                                    <h5 style="margin:0 0 8px 0;color:#2e7d32;">Topik Terpopuler Secara Nasional:</h5>
+                                    <ol style="margin:0;padding-left:20px;">
+                                        {% for topic, count in top_topics %}
+                                        <li style="margin-bottom:6px;font-size:0.95em;">
                                             <b>{{ topic }}</b>: {{ count }} pertanyaan
                                         </li>
                                         {% endfor %}
-                                    </ul>
+                                    </ol>
+                                    <div style="margin-top:12px;padding-top:8px;border-top:1px solid #e0e0e0;font-size:0.85em;color:#666;">
+                                        <i>📊 Data agregat dari seluruh wilayah Indonesia</i>
+                                    </div>
                                 </div>
-                                {% endfor %}
                             </div>
                             
                             <!-- Single region view (hidden by default) -->
@@ -157,17 +159,17 @@
                         // Regional filter functionality
                         document.getElementById('regional-filter').addEventListener('change', function() {
                             const selectedRegion = this.value;
-                            const allRegionsView = document.getElementById('all-regions-view');
+                            const nationalView = document.getElementById('national-view');
                             const singleRegionView = document.getElementById('single-region-view');
                             const singleRegionCards = document.querySelectorAll('.single-region-data');
                             
                             if (selectedRegion === '') {
-                                // Show all regions (national view)
-                                allRegionsView.style.display = 'block';
+                                // Show national view (Indonesia overall trends)
+                                nationalView.style.display = 'block';
                                 singleRegionView.style.display = 'none';
                             } else {
                                 // Show single region
-                                allRegionsView.style.display = 'none';
+                                nationalView.style.display = 'none';
                                 singleRegionView.style.display = 'block';
                                 
                                 // Hide all single region cards
