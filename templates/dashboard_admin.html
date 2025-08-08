@@ -383,29 +383,56 @@
 
     async function renderTopicBubbles(topic, days) {
         bubbleLayer.clearLayers();
-        if (!topic) return;
+        
         const region = regionEl.value;
         const provinceId = provinceEl.value;
-        const params = new URLSearchParams({ topic, days, region, province_id: provinceId });
-        const res = await fetch(`/api/admin/topic-distribution?${params.toString()}`);
-        const json = await res.json();
-        const markers = json.markers || [];
-        if (markers.length === 0) return;
-        const bounds = [];
-        markers.forEach(m => {
-            const radius = radiusFromCount(m.count);
-            const circle = L.circleMarker([m.lat, m.lon], {
-                radius,
-                color: '#2e7d32',
-                fillColor: '#66bb6a',
-                fillOpacity: 0.6,
-                weight: 1
-            }).bindPopup(`<b>${topic}</b>${m.region ? ' (' + m.region + ')' : ''}<br>Jumlah pertanyaan: <b>${m.count}</b>`);
-            circle.addTo(bubbleLayer);
-            bounds.push([m.lat, m.lon]);
-        });
-        if (bounds.length > 0) map.fitBounds(bounds, { padding: [20, 20] });
-        else map.setView(defaultCenter, 4);
+        
+        // Handle empty topic (Semua topik) by passing empty string
+        const topicParam = topic || '';
+        const params = new URLSearchParams({ topic: topicParam, days, region, province_id: provinceId });
+        
+        try {
+            console.log('Fetching topic distribution for:', { topic: topicParam, days, region, province_id: provinceId });
+            const res = await fetch(`/api/admin/topic-distribution?${params.toString()}`);
+            
+            if (!res.ok) {
+                throw new Error(`HTTP error! status: ${res.status}`);
+            }
+            
+            const json = await res.json();
+            const markers = json.markers || [];
+            
+            console.log(`Found ${markers.length} markers for topic: "${topicParam || 'Semua topik'}"`);
+            
+            if (markers.length === 0) {
+                console.log('No markers found for the selected filters');
+                map.setView(defaultCenter, 4);
+                return;
+            }
+            
+            const bounds = [];
+            markers.forEach(m => {
+                const radius = radiusFromCount(m.count);
+                const circle = L.circleMarker([m.lat, m.lon], {
+                    radius,
+                    color: '#2e7d32',
+                    fillColor: '#66bb6a',
+                    fillOpacity: 0.6,
+                    weight: 1
+                }).bindPopup(`<b>${topic || 'Semua topik'}</b>${m.region ? ' (' + m.region + ')' : ''}<br>Jumlah pertanyaan: <b>${m.count}</b>`);
+                circle.addTo(bubbleLayer);
+                bounds.push([m.lat, m.lon]);
+            });
+            
+            if (bounds.length > 0) {
+                map.fitBounds(bounds, { padding: [20, 20] });
+            } else {
+                map.setView(defaultCenter, 4);
+            }
+        } catch (error) {
+            console.error('Error fetching topic distribution:', error);
+            map.setView(defaultCenter, 4);
+        }
     }
 
     const topicEl = document.getElementById('filter-topic');

@@ -963,8 +963,24 @@ def register_routes(app):
         if region_filter:
             users_query = users_query.filter(User.region == region_filter)
         elif province_id:
-            from .models import Regency
-            users_query = users_query.join(Regency, Regency.name == User.region).filter(Regency.province_id == int(province_id))
+            # Use the same strategy as in the chat filtering above
+            try:
+                from .models import Regency
+                pid_int = int(province_id)
+                regency_names = [r.name for r in Regency.query.filter_by(province_id=pid_int).all()]
+                
+                if regency_names:
+                    users_query = users_query.filter(User.region.in_(regency_names))
+                else:
+                    # Fallback with province name
+                    province = Province.query.get(pid_int)
+                    if province:
+                        province_name = province.name.lower()
+                        users_query = users_query.filter(db.func.lower(User.region).contains(province_name))
+                    else:
+                        users_query = users_query.filter(User.id == -1)  # No results
+            except ValueError:
+                users_query = users_query.filter(User.id == -1)  # No results
         users = users_query.with_entities(User.id, User.latitude, User.longitude, User.region).all()
 
         markers_map = {}
