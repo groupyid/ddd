@@ -98,6 +98,24 @@
                                 <li>Wilayah aktif: <b>{{ wilayah_aktif }}</b></li>
                             </ul>
                         </div>
+                        
+                        {% if topic_by_region %}
+                        <h3 style="margin-top:24px;color:#2e7d32;">Tren Topik per Daerah</h3>
+                        <div style="background:#f7fafc;border-radius:8px;padding:16px;max-height:300px;overflow-y:auto;">
+                            {% for region, topics in topic_by_region.items() %}
+                            <div style="margin-bottom:16px;padding:12px;background:#fff;border-radius:6px;border-left:4px solid #2e7d32;">
+                                <h4 style="margin:0 0 8px 0;color:#1b5e20;">{{ region }}</h4>
+                                <ul style="margin:0;padding-left:20px;font-size:0.9em;">
+                                    {% for topic, count in topics.most_common(5) %}
+                                    <li style="margin-bottom:4px;">
+                                        <b>{{ topic }}</b>: {{ count }} pertanyaan
+                                    </li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
                     </div>
                     <div style="flex:1;min-width:320px;max-width:520px;">
                         <h2>Peta Sebaran Topik Pertanyaan</h2>

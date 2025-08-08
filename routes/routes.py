@@ -200,9 +200,26 @@ def register_routes(app):
             chats = ChatHistory.query.join(User, ChatHistory.user_id == User.id) \
                 .filter(ChatHistory.created_at >= week_ago, User.region == selected_region).all()
         elif selected_province_id:
-            chats = ChatHistory.query.join(User, ChatHistory.user_id == User.id) \
-                .join(Regency, Regency.name == User.region) \
-                .filter(ChatHistory.created_at >= week_ago, Regency.province_id == int(selected_province_id)).all()
+            # Use the same robust strategy as in API endpoints
+            try:
+                pid_int = int(selected_province_id)
+                regency_names = [r.name for r in Regency.query.filter_by(province_id=pid_int).all()]
+                
+                if regency_names:
+                    chats = ChatHistory.query.join(User, ChatHistory.user_id == User.id) \
+                        .filter(ChatHistory.created_at >= week_ago, User.region.in_(regency_names)).all()
+                else:
+                    # Fallback with province name
+                    province = Province.query.get(pid_int)
+                    if province:
+                        province_name = province.name.lower()
+                        chats = ChatHistory.query.join(User, ChatHistory.user_id == User.id) \
+                            .filter(ChatHistory.created_at >= week_ago) \
+                            .filter(db.func.lower(User.region).contains(province_name)).all()
+                    else:
+                        chats = []
+            except ValueError:
+                chats = []
         else:
             chats = ChatHistory.query.filter(ChatHistory.created_at >= week_ago).all()
 
@@ -219,6 +236,22 @@ def register_routes(app):
             keywords = [w for w in keywords if w not in STOPWORDS and len(w) > 2]
             phrase_counter = _collections.Counter(keywords)
         top_topics = phrase_counter.most_common(5)
+
+        # Generate topic breakdown by region
+        topic_by_region = {}
+        for c in chats:
+            user = user_map.get(c.user_id)
+            if not user or not user.region:
+                continue
+            
+            # Extract topics from this chat
+            chat_phrases = extract_phrases(c.question)
+            for phrase in chat_phrases:
+                if phrase_counter.get(phrase, 0) >= 1:  # Only include phrases that appear in top topics
+                    region = user.region
+                    if region not in topic_by_region:
+                        topic_by_region[region] = _collections.Counter()
+                    topic_by_region[region][phrase] += 1
 
         # All region & topic for filter (union Region master + user regions)
         user_regions = [u.region for u in User.query.filter(User.region != None).with_entities(User.region).all()]
@@ -291,6 +324,7 @@ def register_routes(app):
             jam_aktif_tertinggi=jam_aktif_tertinggi,
             rata2_pertanyaan_per_user=rata2_pertanyaan_per_user,
             ews=ews,
+            topic_by_region=topic_by_region,
             selected_region=selected_region,
             selected_province_id=selected_province_id or ''
         )
